@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Expense Tracker - Smart Budget Manager</title>
+    <link rel="icon" type="image/png" href="dollar.png" />
+    <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+    <!-- Filter Buttons -->
+    <div id="filterButtons" class="filter-buttons">
+        <button onclick="showIncome()">Show Only Income</button>
+        <button onclick="showExpense()">Show Only Expense</button>
+        <button onclick="showAllTransactions()">Show All Transactions</button>
+    </div>
+    <div class="container">
+        <h1>💰 Expense Tracker</h1>
+
+        <div class="section">
+            <label>Enter Balance:</label><br />
+            <input type="number" id="balanceInput" placeholder="₹ Amount" /><br />
+            <button onclick="addBalance()">Add Balance</button>
+        </div>
+
+        <div class="section">
+            <label>Enter Expense:</label><br />
+            <input type="number" id="expenseInput" placeholder="₹ Expense" />
+            <textarea id="descInput" placeholder="what expense? where? why?" rows="2"></textarea><br />
+            <button onclick="addExpense()">Add Expense</button>
+        </div>
+
+        <div class="section">
+            <label>Enter Incoming Money:</label><br />
+            <input type="number" id="incomeInput" placeholder="₹ Amount" />
+            <textarea id="incomeDescInput" placeholder="Who is sending? Why? When?" rows="2"></textarea><br />
+            <button onclick="addIncome()">Add Income</button>
+        </div>
+
+        <div class="section">
+            <h3>Remaining Balance: ₹ <span id="balance">0</span></h3>
+            <div id="warning"></div>
+        </div>
+
+        <div class="section">
+            <h3>Transaction History:</h3>
+            <ul id="expenseList"></ul>
+            <button onclick="clearAll()">Clear All</button>
+        </div>
+        <div id="feedback"></div>
+    </div>
+
+
+    <script src="script.js"></script>
+</body>
+
+</html>

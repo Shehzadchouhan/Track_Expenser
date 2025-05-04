@@ -1,0 +1,162 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap');
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* CSS to position the filter buttons */
+.filter-buttons {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: grid;
+    grid-row: 1;
+    gap: 10px;
+    z-index: 10;
+}
+
+.filter-buttons button {
+    background-color: #f2f2f2;
+    color: #45a049;
+    padding: 10px 20px;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background-color 0.3s ease;
+}
+
+.filter-buttons button:hover {
+    background-color: whitesmoke;
+}
+
+/* General page layout styles */
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+}
+
+#balance {
+    font-weight: bold;
+}
+
+#expenseList {
+    margin-top: 20px;
+}
+
+body {
+    font-family: "Poppins", sans-serif;
+    background: linear-gradient(135deg, #0c8338, #2e8a3a, #29986c, #2d983b);
+    background-size: 400% 400%;
+    animation: gradientAnimation 10s ease infinite;
+    color: #333;
+    padding: 20px;
+}
+
+@keyframes gradientAnimation {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+.container {
+    max-width: 500px;
+    margin: auto;
+    background: #ffffff;
+    padding: 30px;
+    border-radius: 10px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+}
+
+h1 {
+    text-align: center;
+    color: #2d7f5e;
+    margin-bottom: 20px;
+    font-weight: 600;
+}
+
+.section {
+    margin-top: 30px;
+}
+
+input[type="number"],
+input[type="text"],
+textarea {
+    width: 100%;
+    padding: 12px;
+    margin: 8px 0;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 16px;
+    outline: none;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    resize: vertical;
+}
+
+input[type="number"]:focus,
+input[type="text"]:focus,
+textarea:focus {
+    border-color: #2d7f5e;
+    box-shadow: 0 0 5px rgba(45, 127, 94, 0.5);
+}
+
+button {
+    padding: 12px 20px;
+    border-radius: 8px;
+    background-color: #2d7f5e;
+    color: white;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease, transform 0.2s ease;
+    margin-top: 10px;
+}
+
+button:hover {
+    background-color: #25694e;
+    transform: translateY(-2px);
+}
+
+button:active {
+    transform: translateY(2px);
+}
+
+#warning {
+    color: red;
+    font-weight: bold;
+    margin-top: 10px;
+}
+
+li {
+    background-color: #eef6f1;
+    padding: 10px;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    list-style-type: none;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+li:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+button:focus {
+    outline: none;
+}
+
+@media (max-width: 600px) {
+    .container {
+        padding: 20px;
+    }
+
+    input,
+    textarea {
+        width: 100%;
+    }
+
+    button {
+        width: 100%;
+    }
+}
