@@ -7,9 +7,32 @@
     <title>Expense Tracker - Smart Budget Manager</title>
     <link rel="icon" type="image/png" href="assets/dollar.png" />
     <link rel="stylesheet" href="style.css" />
+
+    <!-- frebase configurations -->
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-auth.js"></script>
+    
+      <!-- Your Firebase Configuration -->
+  <script type="module">
+     import { initializeApp } from 'https://www.gstatic.com/firebasejs/9.0.0/firebase-app.js';
+     import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from 'https://www.gstatic.com/firebasejs/9.0.0/firebase-auth.js';
+
+    const firebaseConfig = {
+      apiKey: "your-api-key",
+      authDomain: "your-auth-domain",
+      projectId: "your-project-id",
+      storageBucket: "your-storage-bucket",
+      messagingSenderId: "your-sender-id",
+      appId: "your-app-id"
+    };
+    const app = firebase.initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+  </script>
 </head>
 
 <body>
+ 
+  
     <!-- Filter Buttons -->
     <div id="filterButtons" class="filter-buttons">
         <button onclick="showIncome()">Show Only Income</button>
@@ -52,8 +75,31 @@
         <div id="feedback"></div>
     </div>
 
+   <!-- Sign Up Form -->
+   <div id="signUpForm">
+    <h2>Sign Up</h2>
+    <input type="email" id="signUpEmail" placeholder="Enter Email">
+    <input type="password" id="signUpPassword" placeholder="Enter Password">
+    <button id="signUpBtn">Sign Up</button>
+  </div>
+  
+  <!-- Login Form -->
+  <div id="loginForm">
+    <h2>Login</h2>
+    <input type="email" id="loginEmail" placeholder="Enter Email">
+    <input type="password" id="loginPassword" placeholder="Enter Password">
+    <button id="loginBtn">Login</button>
+  </div>
+  
+  <!-- Displaying User info once logged in -->
+  <div id="userInfo">
+    <h3>Welcome, <span id="userName"></span></h3>
+    <button id="logOutBtn">Log Out</button>
+  </div>
 
-    <script src="script.js"></script>
+
+    <script type="module" src="script.js"></script>
+    <script src="auth.js"></script>
 </body>
 
 </html>
