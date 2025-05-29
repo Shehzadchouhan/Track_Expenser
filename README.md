@@ -5,8 +5,13 @@ A lightweight and responsive **Expense Tracker** web application built using **H
 ---
 
 ## 🔗 Live Demo
+👉 [Click here to visit the live site](https://magenta-jelly-3ea2fc.netlify.app/)
 
-👉 [Click here to visit the live site](https://shehzadchouhan.github.io/Track_Expenser/)
+
+##Screenshots-
+#### Home Page
+![Home Page](./assets/home.png)
+
 
 ## 🚀 Features
 
