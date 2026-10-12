@@ -149,3 +149,129 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const searchParams = request.nextUrl.searchParams;
+    const txId = searchParams.get('id');
+    const rawPhone = (searchParams.get('phone') || '').trim();
+    const action = searchParams.get('action'); // 'reset_weekly' | 'reset_monthly' | 'reset_all'
+    const admin = createAdminClient();
+
+    // 1. Identify user if phone is provided
+    let userId: string | null = null;
+    if (rawPhone) {
+      const digits = rawPhone.replace(/\D/g, '');
+      const possiblePhones = [
+        rawPhone,
+        `+${digits}`,
+        digits.length === 10 ? `+91${digits}` : null,
+        digits.startsWith('91') ? `+${digits}` : null,
+      ].filter(Boolean) as string[];
+
+      const { data: userSettings } = await admin
+        .from('user_settings')
+        .select('user_id')
+        .in('phone_number', possiblePhones)
+        .eq('phone_verified', true)
+        .limit(1)
+        .maybeSingle();
+
+      if (userSettings) {
+        userId = userSettings.user_id;
+      }
+    }
+
+    // 2. Delete single transaction by ID
+    if (txId) {
+      let deleteQuery = admin.from('transactions').delete().eq('id', txId);
+      if (userId) {
+        deleteQuery = deleteQuery.eq('user_id', userId);
+      }
+      const { error } = await deleteQuery;
+      if (error) {
+        console.error('[Dashboard API] Failed to delete transaction:', error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      return NextResponse.json({ success: true, deletedId: txId });
+    }
+
+    // 3. Reset transactions by cycle
+    if (action) {
+      if (!userId) {
+        const { data: fallbackUser } = await admin
+          .from('user_settings')
+          .select('user_id')
+          .eq('phone_verified', true)
+          .limit(1)
+          .maybeSingle();
+        if (fallbackUser) {
+          userId = fallbackUser.user_id;
+        } else {
+          return NextResponse.json({ error: 'User not found or unverified' }, { status: 404 });
+        }
+      }
+
+      const now = new Date();
+
+      if (action === 'reset_weekly') {
+        // Start of current week (Monday 00:00:00)
+        const d = new Date(now);
+        const day = d.getDay();
+        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+        const startOfWeek = new Date(d.setDate(diff));
+        startOfWeek.setHours(0, 0, 0, 0);
+
+        const { error } = await admin
+          .from('transactions')
+          .delete()
+          .eq('user_id', userId)
+          .gte('occurred_at', startOfWeek.toISOString());
+
+        if (error) {
+          console.error('[Dashboard API] Failed to reset weekly transactions:', error);
+          return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+        return NextResponse.json({ success: true, action: 'reset_weekly' });
+      }
+
+      if (action === 'reset_monthly') {
+        // Start of current month (1st of month 00:00:00)
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+
+        const { error } = await admin
+          .from('transactions')
+          .delete()
+          .eq('user_id', userId)
+          .gte('occurred_at', startOfMonth.toISOString());
+
+        if (error) {
+          console.error('[Dashboard API] Failed to reset monthly transactions:', error);
+          return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+        return NextResponse.json({ success: true, action: 'reset_monthly' });
+      }
+
+      if (action === 'reset_all') {
+        const { error } = await admin
+          .from('transactions')
+          .delete()
+          .eq('user_id', userId);
+
+        if (error) {
+          console.error('[Dashboard API] Failed to reset all transactions:', error);
+          return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+        return NextResponse.json({ success: true, action: 'reset_all' });
+      }
+
+      return NextResponse.json({ error: 'Unknown reset action' }, { status: 400 });
+    }
+
+    return NextResponse.json({ error: 'Missing id or action parameter' }, { status: 400 });
+  } catch (error) {
+    console.error('[Dashboard API] Error in dashboard delete:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  }
+}
+

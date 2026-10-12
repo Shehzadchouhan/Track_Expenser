@@ -1,23 +1,54 @@
 'use client';
 
-import React from 'react';
-import { Smartphone, ShieldCheck, MessageCircle } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  Smartphone,
+  ShieldCheck,
+  MessageCircle,
+  LogIn,
+  LogOut,
+  User,
+  ChevronDown,
+  RotateCcw,
+} from 'lucide-react';
 import { Logo } from './Logo';
 
 interface NavbarProps {
   isPhoneLinked: boolean;
   phoneNumber?: string | null;
   onOpenPhoneModal: () => void;
+  onSignOut: () => void;
+  onOpenResetModal?: () => void;
 }
 
-export function Navbar({ isPhoneLinked, phoneNumber, onOpenPhoneModal }: NavbarProps) {
+export function Navbar({
+  isPhoneLinked,
+  phoneNumber,
+  onOpenPhoneModal,
+  onSignOut,
+  onOpenResetModal,
+}: NavbarProps) {
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   // WhatsApp bot direct link
   const botWhatsAppUrl = 'https://wa.me/15556319114?text=Spent%20';
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-zinc-200 bg-white/80 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/80">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        {/* New Brand Logo */}
+        {/* Brand Logo */}
         <Logo size="md" />
 
         {/* Status & Actions */}
@@ -35,24 +66,92 @@ export function Navbar({ isPhoneLinked, phoneNumber, onOpenPhoneModal }: NavbarP
             <span className="sm:hidden">WhatsApp</span>
           </a>
 
-          {/* Phone Link Status */}
+          {/* Reset Action Button (Quick Access) */}
+          {onOpenResetModal && (
+            <button
+              onClick={onOpenResetModal}
+              className="hidden sm:flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              title="Reset weekly or monthly cycle"
+            >
+              <RotateCcw className="h-3 w-3 text-amber-500" />
+              <span>Reset</span>
+            </button>
+          )}
+
+          {/* Phone Link / User Account Menu */}
           {isPhoneLinked ? (
-            <div className="flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
-              </span>
-              <Smartphone className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Linked:</span>
-              <span className="font-semibold">{phoneNumber}</span>
+            <div className="relative" ref={dropdownRef}>
+              <button
+                onClick={() => setIsDropdownOpen((prev) => !prev)}
+                className="flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-500/20 dark:text-emerald-400"
+              >
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+                </span>
+                <Smartphone className="h-3.5 w-3.5" />
+                <span className="font-semibold">{phoneNumber}</span>
+                <ChevronDown className="h-3 w-3 opacity-60" />
+              </button>
+
+              {/* Dropdown Menu */}
+              {isDropdownOpen && (
+                <div className="absolute right-0 mt-2 w-56 rounded-2xl border border-zinc-200 bg-white p-2 shadow-xl dark:border-zinc-800 dark:bg-zinc-900 z-50">
+                  <div className="border-b border-zinc-100 px-3 py-2 text-xs dark:border-zinc-800">
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-400">
+                      Active Account
+                    </span>
+                    <p className="font-semibold text-zinc-800 dark:text-zinc-200">
+                      {phoneNumber}
+                    </p>
+                  </div>
+
+                  <div className="py-1">
+                    <button
+                      onClick={() => {
+                        setIsDropdownOpen(false);
+                        onOpenPhoneModal();
+                      }}
+                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    >
+                      <User className="h-3.5 w-3.5 text-zinc-500" />
+                      <span>Switch Account / Sign In</span>
+                    </button>
+
+                    {onOpenResetModal && (
+                      <button
+                        onClick={() => {
+                          setIsDropdownOpen(false);
+                          onOpenResetModal();
+                        }}
+                        className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-amber-600 transition hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/40"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        <span>Reset Tracking Cycle</span>
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() => {
+                        setIsDropdownOpen(false);
+                        onSignOut();
+                      }}
+                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-rose-600 transition hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40"
+                    >
+                      <LogOut className="h-3.5 w-3.5" />
+                      <span>Sign Out</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <button
               onClick={onOpenPhoneModal}
-              className="flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+              className="flex items-center gap-1.5 rounded-full bg-zinc-900 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
             >
-              <Smartphone className="h-3.5 w-3.5" />
-              <span>Link Account</span>
+              <LogIn className="h-3.5 w-3.5" />
+              <span>Sign In / Sign Up</span>
             </button>
           )}
 

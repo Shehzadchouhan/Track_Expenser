@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Navbar } from '@/components/Navbar';
 import { TotalBalanceCard } from '@/components/TotalBalanceCard';
 import { SpendingTrendChart } from '@/components/SpendingTrendChart';
@@ -9,57 +9,38 @@ import { WhatsAppLinkCard } from '@/components/WhatsAppLinkCard';
 import { TransactionFeed, DisplayTransaction } from '@/components/TransactionFeed';
 import { CategoryBreakdown, CategorySpendItem } from '@/components/CategoryBreakdown';
 import { AddTransactionModal } from '@/components/AddTransactionModal';
+import { ResetModal, ResetScope } from '@/components/ResetModal';
+import { AuthModal } from '@/components/AuthModal';
 import { calculateDailyBudgetPulse, BudgetPulseResult } from '@/lib/budget';
 import { DEFAULT_CATEGORIES } from '@/lib/constants';
-import { X } from 'lucide-react';
-
-const INITIAL_DEMO_TRANSACTIONS: DisplayTransaction[] = [
-  {
-    id: 'demo-1',
-    type: 'expense',
-    amount_paise: 35000,
-    merchant: 'HPCL Petrol Pump',
-    note: 'petrol refill',
-    category_name: 'Transportation',
-    category_color: '#3B82F6',
-    source: 'whatsapp_text',
-    occurred_at: '2026-10-11T04:00:00.000Z',
-  },
-  {
-    id: 'demo-2',
-    type: 'expense',
-    amount_paise: 24000,
-    merchant: 'Swiggy',
-    note: 'lunch delivery',
-    category_name: 'Food & Dining',
-    category_color: '#F59E0B',
-    source: 'whatsapp_image',
-    occurred_at: '2026-10-11T03:00:00.000Z',
-  },
-  {
-    id: 'demo-3',
-    type: 'income',
-    amount_paise: 1500000,
-    merchant: 'Client Payment',
-    note: 'UI design gig',
-    category_name: 'Freelance',
-    category_color: '#06B6D4',
-    source: 'web',
-    occurred_at: '2026-10-10T05:30:00.000Z',
-  },
-];
+import {
+  Calendar,
+  CalendarDays,
+  Layers,
+  RotateCcw,
+  Zap,
+  X,
+  AlertCircle,
+} from 'lucide-react';
 
 export default function Home() {
-  const [transactions, setTransactions] = useState<DisplayTransaction[]>(INITIAL_DEMO_TRANSACTIONS);
+  const [transactions, setTransactions] = useState<DisplayTransaction[]>([]);
   const [startingBalanceRupees, setStartingBalanceRupees] = useState<number>(50000); // Default Starting Capital ₹50,000
   const [monthlyBudgetPaise, setMonthlyBudgetPaise] = useState<number>(2500000); // Default ₹25,000
   const [isPhoneLinked, setIsPhoneLinked] = useState<boolean>(false);
   const [linkedPhone, setLinkedPhone] = useState<string | null>(null);
+
+  // Time Horizon Cycle Filter: 'weekly' | 'monthly' | 'all'
+  const [timeRange, setTimeRange] = useState<'weekly' | 'monthly' | 'all'>('monthly');
+
+  // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isPhoneModalOpen, setIsPhoneModalOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
   // Fetch live dashboard data from Supabase if phone is linked
   const loadDashboardData = useCallback(async (phone: string) => {
+    if (!phone) return;
     try {
       const res = await fetch(`/api/dashboard?phone=${encodeURIComponent(phone)}`);
       if (!res.ok) return;
@@ -70,7 +51,8 @@ export default function Home() {
         if (data.monthlyBudgetPaise) {
           setMonthlyBudgetPaise(data.monthlyBudgetPaise);
         }
-        if (Array.isArray(data.transactions) && data.transactions.length > 0) {
+        // Always set transactions when data.transactions is returned (even if empty [])
+        if (Array.isArray(data.transactions)) {
           setTransactions(data.transactions);
         }
       }
@@ -79,46 +61,105 @@ export default function Home() {
     }
   }, []);
 
-  // Restore stored phone link and starting balance on initial mount
+  // Restore stored phone link, starting balance, and cycle on initial mount
   useEffect(() => {
     const savedPhone = localStorage.getItem('track_expenser_phone') || '';
     const savedStartingBalance = localStorage.getItem('track_expenser_starting_balance');
+    const savedCycle = localStorage.getItem('track_expenser_cycle') as 'weekly' | 'monthly' | 'all' | null;
+
     if (savedStartingBalance) {
       const parsed = parseFloat(savedStartingBalance);
       if (!isNaN(parsed) && parsed >= 0) {
         setStartingBalanceRupees(parsed);
       }
     }
-    loadDashboardData(savedPhone);
+
+    if (savedCycle && ['weekly', 'monthly', 'all'].includes(savedCycle)) {
+      setTimeRange(savedCycle);
+    }
+
+    if (savedPhone) {
+      setLinkedPhone(savedPhone);
+      loadDashboardData(savedPhone);
+    }
   }, [loadDashboardData]);
 
   // Periodic polling for new WhatsApp expenses (5s live pulse)
   useEffect(() => {
+    if (!linkedPhone) return;
     const interval = setInterval(() => {
-      loadDashboardData(linkedPhone || '');
+      loadDashboardData(linkedPhone);
     }, 5000);
     return () => clearInterval(interval);
   }, [linkedPhone, loadDashboardData]);
 
-  // Compute total spent today and month
+  // Cycle range start dates
+  const { startOfWeek, startOfMonth, cycleRangeLabel } = useMemo(() => {
+    const now = new Date();
+
+    // Start of week (Monday 00:00:00)
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    const sow = new Date(now);
+    sow.setDate(diff);
+    sow.setHours(0, 0, 0, 0);
+
+    // Start of month (1st of month 00:00:00)
+    const som = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+
+    let label = '';
+    if (timeRange === 'weekly') {
+      const sowFormatted = sow.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
+      const nowFormatted = now.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
+      label = `Week of ${sowFormatted} – ${nowFormatted}`;
+    } else if (timeRange === 'monthly') {
+      label = now.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+    } else {
+      label = 'All Recorded History';
+    }
+
+    return { startOfWeek: sow, startOfMonth: som, cycleRangeLabel: label };
+  }, [timeRange]);
+
+  // Filter transactions based on active cycle
+  const cycleTransactions = useMemo(() => {
+    return transactions.filter((t) => {
+      const tDate = new Date(t.occurred_at);
+      if (timeRange === 'weekly') {
+        return tDate >= startOfWeek;
+      }
+      if (timeRange === 'monthly') {
+        return tDate >= startOfMonth;
+      }
+      return true;
+    });
+  }, [transactions, timeRange, startOfWeek, startOfMonth]);
+
+  // Handle cycle switch with persistence
+  const handleCycleChange = (range: 'weekly' | 'monthly' | 'all') => {
+    setTimeRange(range);
+    localStorage.setItem('track_expenser_cycle', range);
+  };
+
+  // Compute spend stats
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  const spentTodayPaise = transactions
+  const spentTodayPaise = cycleTransactions
     .filter((t) => t.type === 'expense' && new Date(t.occurred_at) >= todayStart)
     .reduce((sum, t) => sum + t.amount_paise, 0);
 
-  const monthSpentPaise = transactions
+  const cycleSpentPaise = cycleTransactions
     .filter((t) => t.type === 'expense')
     .reduce((sum, t) => sum + t.amount_paise, 0);
 
   const pulse: BudgetPulseResult = calculateDailyBudgetPulse({
     monthlyBudgetPaise,
-    monthSpentPaise,
+    monthSpentPaise: cycleSpentPaise,
     spentTodayPaise,
   });
 
-  // Calculate Category Breakdown
+  // Calculate Category Breakdown based on cycle transactions
   const categoryMap = new Map<string, CategorySpendItem>();
   DEFAULT_CATEGORIES.filter((c) => c.kind === 'expense').forEach((c) => {
     categoryMap.set(c.name, {
@@ -130,7 +171,7 @@ export default function Home() {
     });
   });
 
-  transactions
+  cycleTransactions
     .filter((t) => t.type === 'expense')
     .forEach((t) => {
       const name = t.category_name || 'Other Expense';
@@ -174,8 +215,50 @@ export default function Home() {
     localStorage.setItem('track_expenser_starting_balance', newBalance.toString());
   };
 
+  // Permanently delete transaction from Supabase and UI
   const handleDeleteTransaction = async (id: string) => {
+    // 1. Optimistically remove from state
     setTransactions((prev) => prev.filter((t) => t.id !== id));
+
+    // 2. Persist deletion to Supabase
+    if (linkedPhone) {
+      try {
+        await fetch(
+          `/api/dashboard?id=${encodeURIComponent(id)}&phone=${encodeURIComponent(linkedPhone)}`,
+          { method: 'DELETE' }
+        );
+      } catch (err) {
+        console.warn('Failed to delete transaction on server:', err);
+      }
+    }
+  };
+
+  // Reset tracking cycle / history
+  const handleConfirmReset = async (scope: ResetScope, resetStartingBalance: boolean) => {
+    if (linkedPhone) {
+      const res = await fetch(
+        `/api/dashboard?action=${encodeURIComponent(scope)}&phone=${encodeURIComponent(linkedPhone)}`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData?.error || 'Failed to reset on server');
+      }
+    }
+
+    // Update client transactions
+    if (scope === 'reset_weekly') {
+      setTransactions((prev) => prev.filter((t) => new Date(t.occurred_at) < startOfWeek));
+    } else if (scope === 'reset_monthly') {
+      setTransactions((prev) => prev.filter((t) => new Date(t.occurred_at) < startOfMonth));
+    } else if (scope === 'reset_all') {
+      setTransactions([]);
+    }
+
+    if (resetStartingBalance) {
+      setStartingBalanceRupees(0);
+      localStorage.setItem('track_expenser_starting_balance', '0');
+    }
   };
 
   const handleAddTransaction = async (data: {
@@ -203,7 +286,7 @@ export default function Home() {
 
     if (linkedPhone) {
       try {
-        await fetch('/api/dashboard', {
+        const res = await fetch('/api/dashboard', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -216,6 +299,13 @@ export default function Home() {
             note: data.note,
           }),
         });
+        const resData = await res.json();
+        if (resData.transaction?.id) {
+          // Replace temporary id with real Supabase id
+          setTransactions((prev) =>
+            prev.map((t) => (t.id === newTx.id ? { ...t, id: resData.transaction.id } : t))
+          );
+        }
       } catch (err) {
         console.warn('Failed to save manual transaction:', err);
       }
@@ -225,28 +315,101 @@ export default function Home() {
   const handlePhoneLinkedSuccess = (phone: string) => {
     setIsPhoneLinked(true);
     setLinkedPhone(phone);
-    setIsPhoneModalOpen(false);
+    setIsAuthModalOpen(false);
     localStorage.setItem('track_expenser_phone', phone);
     loadDashboardData(phone);
   };
 
+  // Sign out / switch account
+  const handleSignOut = () => {
+    localStorage.removeItem('track_expenser_phone');
+    localStorage.removeItem('track_expenser_starting_balance');
+    setIsPhoneLinked(false);
+    setLinkedPhone(null);
+    setTransactions([]);
+    setStartingBalanceRupees(0);
+  };
+
   return (
     <div className="min-h-screen bg-zinc-50 font-sans text-zinc-900 antialiased dark:bg-black dark:text-zinc-50">
-      {/* Navbar with Brand Logo & One-Tap WhatsApp */}
+      {/* Navbar with Brand Logo, WhatsApp Link, Sign In / Out & Reset */}
       <Navbar
         isPhoneLinked={isPhoneLinked}
         phoneNumber={linkedPhone}
-        onOpenPhoneModal={() => setIsPhoneModalOpen(true)}
+        onOpenPhoneModal={() => setIsAuthModalOpen(true)}
+        onSignOut={handleSignOut}
+        onOpenResetModal={() => setIsResetModalOpen(true)}
       />
 
       {/* Main Container */}
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
+        {/* Cycle Tracking & Reset Toolbar */}
+        <div className="flex flex-col gap-3 rounded-2xl border border-zinc-200/80 bg-white/90 p-3.5 shadow-2xs dark:border-zinc-800 dark:bg-zinc-900/90 sm:flex-row sm:items-center sm:justify-between">
+          {/* Cycle Selector Pills */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
+              Tracking:
+            </span>
+            <div className="flex rounded-xl bg-zinc-100 p-0.5 dark:bg-zinc-800">
+              <button
+                onClick={() => handleCycleChange('weekly')}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                  timeRange === 'weekly'
+                    ? 'bg-white text-zinc-900 shadow-2xs dark:bg-zinc-700 dark:text-zinc-100'
+                    : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
+                }`}
+              >
+                <Zap className="h-3 w-3 text-amber-500" />
+                <span>This Week</span>
+              </button>
+              <button
+                onClick={() => handleCycleChange('monthly')}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                  timeRange === 'monthly'
+                    ? 'bg-white text-zinc-900 shadow-2xs dark:bg-zinc-700 dark:text-zinc-100'
+                    : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
+                }`}
+              >
+                <Calendar className="h-3 w-3 text-emerald-500" />
+                <span>This Month</span>
+              </button>
+              <button
+                onClick={() => handleCycleChange('all')}
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                  timeRange === 'all'
+                    ? 'bg-white text-zinc-900 shadow-2xs dark:bg-zinc-700 dark:text-zinc-100'
+                    : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
+                }`}
+              >
+                <Layers className="h-3 w-3 text-cyan-500" />
+                <span>All Time</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Active Range & Reset Action */}
+          <div className="flex items-center justify-between gap-3 sm:justify-end">
+            <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400" suppressHydrationWarning>
+              {cycleRangeLabel}
+            </span>
+            <button
+              onClick={() => setIsResetModalOpen(true)}
+              className="flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300"
+              title="Reset cycle or transaction history"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              <span>Reset Cycle</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Dashboard Grid */}
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
           {/* Left / Main Column: Balances, Visual Analytics & Transactions */}
           <div className="space-y-8 lg:col-span-2">
             {/* Live Total Balance & Fluctuation Cockpit */}
             <TotalBalanceCard
-              transactions={transactions}
+              transactions={cycleTransactions}
               startingBalanceRupees={startingBalanceRupees}
               onUpdateStartingBalance={handleUpdateStartingBalance}
             />
@@ -255,16 +418,17 @@ export default function Home() {
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
               <SafeToSpendCard pulse={pulse} onUpdateBudget={handleUpdateBudget} />
               <SpendingTrendChart
-                transactions={transactions}
+                transactions={cycleTransactions}
                 dailyAllowancePaise={pulse.dailySafeAllowancePaise}
               />
             </div>
 
             {/* Transactions Feed & Statement Actions */}
             <TransactionFeed
-              transactions={transactions}
+              transactions={cycleTransactions}
               onDeleteTransaction={handleDeleteTransaction}
               onOpenAddModal={() => setIsAddModalOpen(true)}
+              onOpenResetModal={() => setIsResetModalOpen(true)}
               startingBalanceRupees={startingBalanceRupees}
             />
           </div>
@@ -281,32 +445,29 @@ export default function Home() {
             {/* Category Breakdown */}
             <CategoryBreakdown
               categories={categoryItems}
-              totalSpendPaise={monthSpentPaise}
+              totalSpendPaise={cycleSpentPaise}
             />
           </div>
         </div>
       </main>
 
-      {/* Connect WhatsApp Modal */}
-      {isPhoneModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
-          <div className="relative w-full max-w-md">
-            <button
-              onClick={() => setIsPhoneModalOpen(false)}
-              className="absolute right-3 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400"
-            >
-              <X className="h-4 w-4" />
-            </button>
-            <WhatsAppLinkCard
-              isLinked={isPhoneLinked}
-              linkedPhone={linkedPhone}
-              onSuccess={handlePhoneLinkedSuccess}
-            />
-          </div>
-        </div>
-      )}
+      {/* Sign In / Switch Account Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onSuccess={handlePhoneLinkedSuccess}
+        currentPhone={linkedPhone}
+      />
 
-      {/* Manual Add Modal */}
+      {/* Reset Cycle Modal */}
+      <ResetModal
+        isOpen={isResetModalOpen}
+        onClose={() => setIsResetModalOpen(false)}
+        currentScope={timeRange}
+        onConfirmReset={handleConfirmReset}
+      />
+
+      {/* Manual Add Transaction Modal */}
       <AddTransactionModal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
