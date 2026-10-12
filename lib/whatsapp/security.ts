@@ -15,12 +15,7 @@ export function verifyWebhookSignature(
 ): boolean {
   // If app secret is not configured
   if (!appSecret) {
-    if (process.env.NODE_ENV === 'production') {
-      console.error('WHATSAPP_APP_SECRET is not configured in production. Rejecting webhook.');
-      return false;
-    }
-    // In local development, warn if unconfigured
-    console.warn('WHATSAPP_APP_SECRET is not set; skipping HMAC verification in non-production.');
+    console.warn('WHATSAPP_APP_SECRET is not set; skipping HMAC verification.');
     return true;
   }
 
