@@ -16,7 +16,8 @@ export const metadata: Metadata = {
   title: "Track Expenser - AI & WhatsApp Financial Cockpit",
   description: "Real-time expense tracking, bank statement ingestion, and live balance fluctuations via WhatsApp & Web.",
   icons: {
-    icon: "/favicon.svg",
+    icon: "/favicon.png",
+    apple: "/favicon.png",
   },
 };
 
