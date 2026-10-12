@@ -10,8 +10,14 @@ import {
   ArrowDownLeft,
   Plus,
   Receipt,
+  Search,
+  Download,
+  Printer,
+  X,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { formatINR } from '@/lib/money';
+import { exportTransactionsToCSV, printTransactionStatement } from '@/lib/export';
 
 export interface DisplayTransaction {
   id: string;
@@ -29,23 +35,47 @@ interface TransactionFeedProps {
   transactions: DisplayTransaction[];
   onDeleteTransaction: (id: string) => Promise<void>;
   onOpenAddModal: () => void;
+  startingBalanceRupees?: number;
 }
 
 export function TransactionFeed({
   transactions,
   onDeleteTransaction,
   onOpenAddModal,
+  startingBalanceRupees = 0,
 }: TransactionFeedProps) {
-  const [filter, setFilter] = useState<'all' | 'whatsapp' | 'web'>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'whatsapp' | 'web'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // Multi-criteria filter
   const filtered = transactions.filter((t) => {
-    if (filter === 'whatsapp') {
-      return t.source === 'whatsapp_text' || t.source === 'whatsapp_image';
+    // 1. Source filter
+    if (sourceFilter === 'whatsapp' && t.source !== 'whatsapp_text' && t.source !== 'whatsapp_image') {
+      return false;
     }
-    if (filter === 'web') {
-      return t.source === 'web';
+    if (sourceFilter === 'web' && t.source !== 'web') {
+      return false;
     }
+
+    // 2. Type filter
+    if (typeFilter !== 'all' && t.type !== typeFilter) {
+      return false;
+    }
+
+    // 3. Search query (matches merchant, note, or category)
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const matchMerchant = t.merchant?.toLowerCase().includes(q);
+      const matchNote = t.note?.toLowerCase().includes(q);
+      const matchCategory = t.category_name?.toLowerCase().includes(q);
+      const matchAmount = (t.amount_paise / 100).toString().includes(q);
+      if (!matchMerchant && !matchNote && !matchCategory && !matchAmount) {
+        return false;
+      }
+    }
+
     return true;
   });
 
@@ -87,50 +117,37 @@ export function TransactionFeed({
   return (
     <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
       {/* Feed Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-            Transactions Feed
+            Transactions & Statements
           </h3>
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Auto-synced from WhatsApp and web
+            Showing {filtered.length} of {transactions.length} entries
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Filter Pills */}
-          <div className="flex rounded-xl bg-zinc-100 p-1 dark:bg-zinc-800">
-            <button
-              onClick={() => setFilter('all')}
-              className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
-                filter === 'all'
-                  ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-zinc-100'
-                  : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
-              }`}
-            >
-              All
-            </button>
-            <button
-              onClick={() => setFilter('whatsapp')}
-              className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
-                filter === 'whatsapp'
-                  ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-zinc-100'
-                  : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
-              }`}
-            >
-              WhatsApp
-            </button>
-            <button
-              onClick={() => setFilter('web')}
-              className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
-                filter === 'web'
-                  ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-700 dark:text-zinc-100'
-                  : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
-              }`}
-            >
-              Web
-            </button>
-          </div>
+        {/* Action Controls */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Export Statement CSV */}
+          <button
+            onClick={() => exportTransactionsToCSV(filtered)}
+            className="flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 shadow-2xs transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+            title="Download CSV Statement"
+          >
+            <Download className="h-3.5 w-3.5 text-zinc-500" />
+            <span className="hidden sm:inline">Export CSV</span>
+          </button>
+
+          {/* Print / PDF Statement */}
+          <button
+            onClick={() => printTransactionStatement(filtered, startingBalanceRupees)}
+            className="flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 shadow-2xs transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+            title="Print or Save PDF Statement"
+          >
+            <Printer className="h-3.5 w-3.5 text-zinc-500" />
+            <span className="hidden sm:inline">Print / PDF</span>
+          </button>
 
           {/* Quick Add Button */}
           <button
@@ -143,16 +160,109 @@ export function TransactionFeed({
         </div>
       </div>
 
+      {/* Search & Filter Toolbar */}
+      <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:items-center">
+        {/* Search Input */}
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search merchant, category, or note..."
+            className="w-full rounded-xl border border-zinc-200 bg-zinc-50/50 py-1.5 pl-9 pr-8 text-xs text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-zinc-800 dark:bg-zinc-800/40 dark:text-zinc-100 dark:focus:bg-zinc-800"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Type Filter Pills (All / Expense / Income) */}
+        <div className="flex rounded-xl bg-zinc-100 p-0.5 dark:bg-zinc-800">
+          <button
+            onClick={() => setTypeFilter('all')}
+            className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+              typeFilter === 'all'
+                ? 'bg-white text-zinc-900 shadow-2xs dark:bg-zinc-700 dark:text-zinc-100'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
+            }`}
+          >
+            All
+          </button>
+          <button
+            onClick={() => setTypeFilter('expense')}
+            className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+              typeFilter === 'expense'
+                ? 'bg-white text-rose-600 shadow-2xs dark:bg-zinc-700 dark:text-rose-400'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
+            }`}
+          >
+            Expenses
+          </button>
+          <button
+            onClick={() => setTypeFilter('income')}
+            className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+              typeFilter === 'income'
+                ? 'bg-white text-emerald-600 shadow-2xs dark:bg-zinc-700 dark:text-emerald-400'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
+            }`}
+          >
+            Income
+          </button>
+        </div>
+
+        {/* Source Filter Pills (All / WhatsApp / Web) */}
+        <div className="flex rounded-xl bg-zinc-100 p-0.5 dark:bg-zinc-800">
+          <button
+            onClick={() => setSourceFilter('all')}
+            className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+              sourceFilter === 'all'
+                ? 'bg-white text-zinc-900 shadow-2xs dark:bg-zinc-700 dark:text-zinc-100'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
+            }`}
+          >
+            All
+          </button>
+          <button
+            onClick={() => setSourceFilter('whatsapp')}
+            className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+              sourceFilter === 'whatsapp'
+                ? 'bg-white text-emerald-700 shadow-2xs dark:bg-zinc-700 dark:text-emerald-300'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
+            }`}
+          >
+            WhatsApp
+          </button>
+          <button
+            onClick={() => setSourceFilter('web')}
+            className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+              sourceFilter === 'web'
+                ? 'bg-white text-zinc-900 shadow-2xs dark:bg-zinc-700 dark:text-zinc-100'
+                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
+            }`}
+          >
+            Web
+          </button>
+        </div>
+      </div>
+
       {/* Transactions List */}
       <div className="mt-5 space-y-2.5">
         {filtered.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-zinc-200 p-8 text-center dark:border-zinc-800">
             <Receipt className="mx-auto h-8 w-8 text-zinc-300 dark:text-zinc-600" />
             <p className="mt-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-              No transactions found.
+              No matching transactions found.
             </p>
             <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-              Send a message on WhatsApp or click "Add" above to log your first expense!
+              {searchQuery
+                ? 'Try clearing your search query or switching filters.'
+                : 'Send a message or screenshot on WhatsApp to log your first transaction!'}
             </p>
           </div>
         ) : (

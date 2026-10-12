@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Navbar } from '@/components/Navbar';
+import { TotalBalanceCard } from '@/components/TotalBalanceCard';
+import { SpendingTrendChart } from '@/components/SpendingTrendChart';
 import { SafeToSpendCard } from '@/components/SafeToSpendCard';
 import { WhatsAppLinkCard } from '@/components/WhatsAppLinkCard';
 import { TransactionFeed, DisplayTransaction } from '@/components/TransactionFeed';
@@ -49,6 +51,7 @@ const INITIAL_DEMO_TRANSACTIONS: DisplayTransaction[] = [
 
 export default function Home() {
   const [transactions, setTransactions] = useState<DisplayTransaction[]>(INITIAL_DEMO_TRANSACTIONS);
+  const [startingBalanceRupees, setStartingBalanceRupees] = useState<number>(50000); // Default Starting Capital ₹50,000
   const [monthlyBudgetPaise, setMonthlyBudgetPaise] = useState<number>(2500000); // Default ₹25,000
   const [isPhoneLinked, setIsPhoneLinked] = useState<boolean>(false);
   const [linkedPhone, setLinkedPhone] = useState<string | null>(null);
@@ -76,9 +79,16 @@ export default function Home() {
     }
   }, []);
 
-  // Restore stored phone link on initial mount or auto-load active verified account
+  // Restore stored phone link and starting balance on initial mount
   useEffect(() => {
     const savedPhone = localStorage.getItem('track_expenser_phone') || '';
+    const savedStartingBalance = localStorage.getItem('track_expenser_starting_balance');
+    if (savedStartingBalance) {
+      const parsed = parseFloat(savedStartingBalance);
+      if (!isNaN(parsed) && parsed >= 0) {
+        setStartingBalanceRupees(parsed);
+      }
+    }
     loadDashboardData(savedPhone);
   }, [loadDashboardData]);
 
@@ -159,6 +169,11 @@ export default function Home() {
     }
   };
 
+  const handleUpdateStartingBalance = (newBalance: number) => {
+    setStartingBalanceRupees(newBalance);
+    localStorage.setItem('track_expenser_starting_balance', newBalance.toString());
+  };
+
   const handleDeleteTransaction = async (id: string) => {
     setTransactions((prev) => prev.filter((t) => t.id !== id));
   };
@@ -217,7 +232,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-zinc-50 font-sans text-zinc-900 antialiased dark:bg-black dark:text-zinc-50">
-      {/* Navbar */}
+      {/* Navbar with Brand Logo & One-Tap WhatsApp */}
       <Navbar
         isPhoneLinked={isPhoneLinked}
         phoneNumber={linkedPhone}
@@ -227,16 +242,30 @@ export default function Home() {
       {/* Main Container */}
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
-          {/* Left / Main Column: Safe to Spend Cockpit & Transactions */}
+          {/* Left / Main Column: Balances, Visual Analytics & Transactions */}
           <div className="space-y-8 lg:col-span-2">
-            {/* Safe to Spend Cockpit */}
-            <SafeToSpendCard pulse={pulse} onUpdateBudget={handleUpdateBudget} />
+            {/* Live Total Balance & Fluctuation Cockpit */}
+            <TotalBalanceCard
+              transactions={transactions}
+              startingBalanceRupees={startingBalanceRupees}
+              onUpdateStartingBalance={handleUpdateStartingBalance}
+            />
 
-            {/* Transactions Feed */}
+            {/* Dual Analytics Row: Safe to Spend Pace & 7-Day Activity Chart */}
+            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+              <SafeToSpendCard pulse={pulse} onUpdateBudget={handleUpdateBudget} />
+              <SpendingTrendChart
+                transactions={transactions}
+                dailyAllowancePaise={pulse.dailySafeAllowancePaise}
+              />
+            </div>
+
+            {/* Transactions Feed & Statement Actions */}
             <TransactionFeed
               transactions={transactions}
               onDeleteTransaction={handleDeleteTransaction}
               onOpenAddModal={() => setIsAddModalOpen(true)}
+              startingBalanceRupees={startingBalanceRupees}
             />
           </div>
 
