@@ -14,11 +14,11 @@ import {
   Download,
   Printer,
   X,
-  FileSpreadsheet,
   RotateCcw,
 } from 'lucide-react';
 import { formatINR } from '@/lib/money';
 import { exportTransactionsToCSV, printTransactionStatement } from '@/lib/export';
+import { categoryLabel, type AppLanguage } from '@/lib/i18n';
 
 export interface DisplayTransaction {
   id: string;
@@ -38,6 +38,9 @@ interface TransactionFeedProps {
   onOpenAddModal: () => void;
   onOpenResetModal?: () => void;
   startingBalanceRupees?: number;
+  simpleMode?: boolean;
+  onShowAllTransactions?: () => void;
+  language: AppLanguage;
 }
 
 export function TransactionFeed({
@@ -46,11 +49,16 @@ export function TransactionFeed({
   onOpenAddModal,
   onOpenResetModal,
   startingBalanceRupees = 0,
+  simpleMode = false,
+  onShowAllTransactions,
+  language,
 }: TransactionFeedProps) {
+  const isHindi = language === 'hi';
   const [sourceFilter, setSourceFilter] = useState<'all' | 'whatsapp' | 'web'>('all');
   const [typeFilter, setTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Multi-criteria filter
   const filtered = transactions.filter((t) => {
@@ -81,11 +89,15 @@ export function TransactionFeed({
 
     return true;
   });
+  const visibleTransactions = simpleMode ? filtered.slice(0, 5) : filtered;
 
   const handleDelete = async (id: string) => {
     setDeletingId(id);
+    setDeleteError(null);
     try {
       await onDeleteTransaction(id);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : 'Could not delete this record. Please try again.');
     } finally {
       setDeletingId(null);
     }
@@ -104,14 +116,14 @@ export function TransactionFeed({
         return (
           <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-700 dark:bg-teal-950/40 dark:text-teal-300">
             <Camera className="h-2.5 w-2.5" />
-            Screenshot
+            {isHindi ? 'स्क्रीनशॉट' : 'Screenshot'}
           </span>
         );
       default:
         return (
           <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
             <Globe className="h-2.5 w-2.5" />
-            Web
+            {isHindi ? 'वेब' : 'Web'}
           </span>
         );
     }
@@ -123,33 +135,39 @@ export function TransactionFeed({
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-            Transactions & Statements
+            {simpleMode
+              ? isHindi ? 'हाल के लेन-देन' : 'Recent transactions'
+              : isHindi ? 'लेन-देन और हिसाब' : 'Transactions & Statements'}
           </h3>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Showing {filtered.length} of {transactions.length} entries
-          </p>
+          {!simpleMode && (
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              {isHindi
+                ? `${transactions.length} में से ${filtered.length} लेन-देन`
+                : `Showing ${filtered.length} of ${transactions.length} entries`}
+            </p>
+          )}
         </div>
 
         {/* Action Controls */}
-        <div className="flex flex-wrap items-center gap-2">
+        {!simpleMode && <div className="flex flex-wrap items-center gap-2">
           {/* Export Statement CSV */}
           <button
             onClick={() => exportTransactionsToCSV(filtered)}
             className="flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 shadow-2xs transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-            title="Download CSV Statement"
+            title={isHindi ? 'CSV हिसाब डाउनलोड करें' : 'Download CSV statement'}
           >
             <Download className="h-3.5 w-3.5 text-zinc-500" />
-            <span className="hidden sm:inline">Export CSV</span>
+            <span className="hidden sm:inline">{isHindi ? 'CSV डाउनलोड' : 'Export CSV'}</span>
           </button>
 
           {/* Print / PDF Statement */}
           <button
             onClick={() => printTransactionStatement(filtered, startingBalanceRupees)}
             className="flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 shadow-2xs transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-            title="Print or Save PDF Statement"
+            title={isHindi ? 'हिसाब प्रिंट करें या PDF में सेव करें' : 'Print or save PDF statement'}
           >
             <Printer className="h-3.5 w-3.5 text-zinc-500" />
-            <span className="hidden sm:inline">Print / PDF</span>
+            <span className="hidden sm:inline">{isHindi ? 'प्रिंट / PDF' : 'Print / PDF'}</span>
           </button>
 
           {/* Reset Action */}
@@ -157,10 +175,10 @@ export function TransactionFeed({
             <button
               onClick={onOpenResetModal}
               className="flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 shadow-2xs transition hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-              title="Reset weekly or monthly cycle"
+              title={isHindi ? 'इस सप्ताह या महीने का हिसाब रीसेट करें' : 'Reset weekly or monthly cycle'}
             >
               <RotateCcw className="h-3.5 w-3.5 text-amber-500" />
-              <span className="hidden sm:inline">Reset</span>
+              <span className="hidden sm:inline">{isHindi ? 'रीसेट' : 'Reset'}</span>
             </button>
           )}
 
@@ -170,13 +188,14 @@ export function TransactionFeed({
             className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-500"
           >
             <Plus className="h-3.5 w-3.5" />
-            <span>Add</span>
+            <span>{isHindi ? 'जोड़ें' : 'Add'}</span>
           </button>
-        </div>
+        </div>}
       </div>
 
       {/* Search & Filter Toolbar */}
-      <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:items-center">
+      {!simpleMode && (
+        <div className="mt-4 flex flex-col gap-2.5 sm:flex-row sm:items-center">
         {/* Search Input */}
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
@@ -184,7 +203,7 @@ export function TransactionFeed({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search merchant, category, or note..."
+            placeholder={isHindi ? 'दुकान, खर्च या नोट खोजें…' : 'Search merchant, category, or note...'}
             className="w-full rounded-xl border border-zinc-200 bg-zinc-50/50 py-1.5 pl-9 pr-8 text-xs text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-zinc-800 dark:bg-zinc-800/40 dark:text-zinc-100 dark:focus:bg-zinc-800"
           />
           {searchQuery && (
@@ -207,7 +226,7 @@ export function TransactionFeed({
                 : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
             }`}
           >
-            All
+            {isHindi ? 'सब' : 'All'}
           </button>
           <button
             onClick={() => setTypeFilter('expense')}
@@ -217,7 +236,7 @@ export function TransactionFeed({
                 : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
             }`}
           >
-            Expenses
+            {isHindi ? 'खर्च' : 'Expenses'}
           </button>
           <button
             onClick={() => setTypeFilter('income')}
@@ -227,7 +246,7 @@ export function TransactionFeed({
                 : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
             }`}
           >
-            Income
+            {isHindi ? 'कमाई' : 'Income'}
           </button>
         </div>
 
@@ -241,7 +260,7 @@ export function TransactionFeed({
                 : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
             }`}
           >
-            All
+            {isHindi ? 'सब' : 'All'}
           </button>
           <button
             onClick={() => setSourceFilter('whatsapp')}
@@ -261,29 +280,39 @@ export function TransactionFeed({
                 : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
             }`}
           >
-            Web
+            {isHindi ? 'वेब' : 'Web'}
           </button>
         </div>
       </div>
+      )}
 
       {/* Transactions List */}
+      {deleteError && (
+        <p role="alert" className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700 dark:bg-rose-950/30 dark:text-rose-300">
+          {deleteError}
+        </p>
+      )}
       <div className="mt-5 space-y-2.5">
         {filtered.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-zinc-200 p-8 text-center dark:border-zinc-800">
             <Receipt className="mx-auto h-8 w-8 text-zinc-300 dark:text-zinc-600" />
             <p className="mt-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-              No matching transactions found.
+              {simpleMode
+                ? isHindi ? 'अभी कोई लेन-देन नहीं' : 'No transactions yet'
+                : isHindi ? 'कोई लेन-देन नहीं मिला।' : 'No matching transactions found.'}
             </p>
             <p className="mt-1 text-[11px] text-zinc-400 dark:text-zinc-500">
-              {searchQuery
-                ? 'Try clearing your search query or switching filters.'
-                : 'Send a message or screenshot on WhatsApp to log your first transaction!'}
+              {simpleMode
+                ? isHindi ? 'अपना पहला खर्च जोड़ें' : 'Add your first record'
+                : searchQuery
+                  ? isHindi ? 'खोज हटाएं या फ़िल्टर बदलें।' : 'Try clearing your search query or switching filters.'
+                  : isHindi ? 'WhatsApp पर संदेश या भुगतान का स्क्रीनशॉट भेजें।' : 'Send a message or screenshot on WhatsApp to log your first transaction!'}
             </p>
           </div>
         ) : (
-          filtered.map((tx) => {
+          visibleTransactions.map((tx) => {
             const isExpense = tx.type === 'expense';
-            const dateStr = new Date(tx.occurred_at).toLocaleDateString('en-IN', {
+            const dateStr = new Date(tx.occurred_at).toLocaleDateString(isHindi ? 'hi-IN' : 'en-IN', {
               day: 'numeric',
               month: 'short',
               hour: '2-digit',
@@ -316,17 +345,17 @@ export function TransactionFeed({
                       <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                         {tx.merchant || tx.note || (isExpense ? 'Expense' : 'Income')}
                       </span>
-                      {getSourceBadge(tx.source)}
+                      {!simpleMode && getSourceBadge(tx.source)}
                     </div>
 
                     <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-                      {tx.category_name && (
+                      {!simpleMode && tx.category_name && (
                         <span className="flex items-center gap-1">
                           <span
                             className="inline-block h-2 w-2 rounded-full"
                             style={{ backgroundColor: tx.category_color || '#64748B' }}
                           />
-                          {tx.category_name}
+                          {categoryLabel(tx.category_name, language)}
                         </span>
                       )}
                       <span>•</span>
@@ -351,8 +380,9 @@ export function TransactionFeed({
                   <button
                     onClick={() => handleDelete(tx.id)}
                     disabled={deletingId === tx.id}
-                    className="opacity-0 transition group-hover:opacity-100 hover:text-rose-600 text-zinc-400 p-1 rounded-lg"
-                    title="Delete Transaction"
+                    className={`rounded-lg p-2 text-zinc-400 transition hover:text-rose-600 disabled:opacity-50 ${simpleMode ? '' : 'opacity-0 group-hover:opacity-100'}`}
+                    title={isHindi ? 'लेन-देन हटाएं' : 'Delete transaction'}
+                    aria-label={`${isHindi ? 'हटाएं' : 'Delete'} ${tx.merchant || tx.note || (isHindi ? 'लेन-देन' : 'transaction')}`}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -362,6 +392,14 @@ export function TransactionFeed({
           })
         )}
       </div>
+      {simpleMode && filtered.length > visibleTransactions.length && onShowAllTransactions && (
+        <button
+          onClick={onShowAllTransactions}
+          className="mt-4 min-h-11 w-full rounded-xl border border-zinc-200 px-4 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+        >
+          {isHindi ? `सभी ${filtered.length} लेन-देन देखें` : `See all ${filtered.length} transactions`}
+        </button>
+      )}
     </div>
   );
 }

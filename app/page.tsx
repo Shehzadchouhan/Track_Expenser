@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { Navbar } from '@/components/Navbar';
 import { TotalBalanceCard } from '@/components/TotalBalanceCard';
 import { SpendingTrendChart } from '@/components/SpendingTrendChart';
@@ -13,15 +13,33 @@ import { ResetModal, ResetScope } from '@/components/ResetModal';
 import { AuthModal } from '@/components/AuthModal';
 import { calculateDailyBudgetPulse, BudgetPulseResult } from '@/lib/budget';
 import { DEFAULT_CATEGORIES } from '@/lib/constants';
+import { formatINR } from '@/lib/money';
+import {
+  getSavedLanguage,
+  getServerLanguage,
+  saveLanguage,
+  subscribeToLanguage,
+} from '@/lib/i18n';
 import {
   Calendar,
-  CalendarDays,
   Layers,
   RotateCcw,
   Zap,
-  X,
-  AlertCircle,
 } from 'lucide-react';
+
+function isDisplayTransaction(value: unknown): value is DisplayTransaction {
+  if (typeof value !== 'object' || value === null) return false;
+  const transaction = value as Record<string, unknown>;
+  return (
+    typeof transaction.id === 'string' &&
+    (transaction.type === 'income' || transaction.type === 'expense') &&
+    typeof transaction.amount_paise === 'number' &&
+    Number.isFinite(transaction.amount_paise) &&
+    typeof transaction.source === 'string' &&
+    ['web', 'whatsapp_text', 'whatsapp_image'].includes(transaction.source) &&
+    typeof transaction.occurred_at === 'string'
+  );
+}
 
 export default function Home() {
   const [transactions, setTransactions] = useState<DisplayTransaction[]>([]);
@@ -29,14 +47,26 @@ export default function Home() {
   const [monthlyBudgetPaise, setMonthlyBudgetPaise] = useState<number>(2500000); // Default ₹25,000
   const [isPhoneLinked, setIsPhoneLinked] = useState<boolean>(false);
   const [linkedPhone, setLinkedPhone] = useState<string | null>(null);
+  const [isSimpleView, setIsSimpleView] = useState(true);
+  const language = useSyncExternalStore(
+    subscribeToLanguage,
+    getSavedLanguage,
+    getServerLanguage
+  );
+  const isHindi = language === 'hi';
 
   // Time Horizon Cycle Filter: 'weekly' | 'monthly' | 'all'
   const [timeRange, setTimeRange] = useState<'weekly' | 'monthly' | 'all'>('monthly');
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [newTransactionType, setNewTransactionType] = useState<'expense' | 'income'>('expense');
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
 
   // Fetch live dashboard data from Supabase if phone is linked
   const loadDashboardData = useCallback(async (phone: string) => {
@@ -81,6 +111,20 @@ export default function Home() {
     if (savedPhone) {
       setLinkedPhone(savedPhone);
       loadDashboardData(savedPhone);
+    } else {
+      const savedTransactions = localStorage.getItem('track_expenser_transactions');
+      if (savedTransactions) {
+        try {
+          const parsedTransactions: unknown = JSON.parse(savedTransactions);
+          if (Array.isArray(parsedTransactions) && parsedTransactions.every(isDisplayTransaction)) {
+            setTransactions(parsedTransactions);
+          } else {
+            console.warn('[Dashboard] Saved local transactions are not a list.');
+          }
+        } catch (err) {
+          console.warn('[Dashboard] Could not restore saved local transactions:', err);
+        }
+      }
     }
   }, [loadDashboardData]);
 
@@ -141,6 +185,8 @@ export default function Home() {
     localStorage.setItem('track_expenser_cycle', range);
   };
 
+  const handleLanguageChange = saveLanguage;
+
   // Compute spend stats
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
@@ -152,6 +198,13 @@ export default function Home() {
   const cycleSpentPaise = cycleTransactions
     .filter((t) => t.type === 'expense')
     .reduce((sum, t) => sum + t.amount_paise, 0);
+  const monthSpentPaise = transactions
+    .filter((t) => t.type === 'expense' && new Date(t.occurred_at) >= startOfMonth)
+    .reduce((sum, t) => sum + t.amount_paise, 0);
+  const todayTransactions = transactions.filter(
+    (t) => t.type === 'expense' && new Date(t.occurred_at) >= todayStart
+  );
+  const todaySpendPaise = todayTransactions.reduce((sum, t) => sum + t.amount_paise, 0);
 
   const pulse: BudgetPulseResult = calculateDailyBudgetPulse({
     monthlyBudgetPaise,
@@ -217,20 +270,20 @@ export default function Home() {
 
   // Permanently delete transaction from Supabase and UI
   const handleDeleteTransaction = async (id: string) => {
-    // 1. Optimistically remove from state
-    setTransactions((prev) => prev.filter((t) => t.id !== id));
-
-    // 2. Persist deletion to Supabase
     if (linkedPhone) {
-      try {
-        await fetch(
-          `/api/dashboard?id=${encodeURIComponent(id)}&phone=${encodeURIComponent(linkedPhone)}`,
-          { method: 'DELETE' }
-        );
-      } catch (err) {
-        console.warn('Failed to delete transaction on server:', err);
+      const response = await fetch(
+        `/api/dashboard?id=${encodeURIComponent(id)}&phone=${encodeURIComponent(linkedPhone)}`,
+        { method: 'DELETE' }
+      );
+      const responseData = await response.json();
+      if (!response.ok) {
+        throw new Error(responseData.error || 'Could not delete this record. Please try again.');
       }
+    } else {
+      const savedTransactions = transactions.filter((transaction) => transaction.id !== id);
+      localStorage.setItem('track_expenser_transactions', JSON.stringify(savedTransactions));
     }
+    setTransactions((prev) => prev.filter((t) => t.id !== id));
   };
 
   // Reset tracking cycle / history
@@ -248,11 +301,16 @@ export default function Home() {
 
     // Update client transactions
     if (scope === 'reset_weekly') {
-      setTransactions((prev) => prev.filter((t) => new Date(t.occurred_at) < startOfWeek));
+      const remaining = transactions.filter((t) => new Date(t.occurred_at) < startOfWeek);
+      setTransactions(remaining);
+      if (!linkedPhone) localStorage.setItem('track_expenser_transactions', JSON.stringify(remaining));
     } else if (scope === 'reset_monthly') {
-      setTransactions((prev) => prev.filter((t) => new Date(t.occurred_at) < startOfMonth));
+      const remaining = transactions.filter((t) => new Date(t.occurred_at) < startOfMonth);
+      setTransactions(remaining);
+      if (!linkedPhone) localStorage.setItem('track_expenser_transactions', JSON.stringify(remaining));
     } else if (scope === 'reset_all') {
       setTransactions([]);
+      if (!linkedPhone) localStorage.setItem('track_expenser_transactions', JSON.stringify([]));
     }
 
     if (resetStartingBalance) {
@@ -282,34 +340,45 @@ export default function Home() {
       occurred_at: new Date().toISOString(),
     };
 
-    setTransactions((prev) => [newTx, ...prev]);
-
     if (linkedPhone) {
-      try {
-        const res = await fetch('/api/dashboard', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            phone: linkedPhone,
-            action: 'add_transaction',
-            type: data.type,
-            amount_paise,
-            category_name: data.category,
-            merchant: data.merchant,
-            note: data.note,
-          }),
-        });
-        const resData = await res.json();
-        if (resData.transaction?.id) {
-          // Replace temporary id with real Supabase id
-          setTransactions((prev) =>
-            prev.map((t) => (t.id === newTx.id ? { ...t, id: resData.transaction.id } : t))
-          );
-        }
-      } catch (err) {
-        console.warn('Failed to save manual transaction:', err);
+      const res = await fetch('/api/dashboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: linkedPhone,
+          action: 'add_transaction',
+          type: data.type,
+          amount_paise,
+          category_name: data.category,
+          merchant: data.merchant,
+          note: data.note,
+        }),
+      });
+      const resData = await res.json();
+      if (!res.ok || !resData.transaction?.id) {
+        throw new Error(resData.error || 'Could not save your record. Please try again.');
       }
+      newTx.id = resData.transaction.id;
+    } else {
+      const savedTransactions = localStorage.getItem('track_expenser_transactions');
+      let parsedTransactions: unknown = [];
+      if (savedTransactions) {
+        try {
+          parsedTransactions = JSON.parse(savedTransactions);
+        } catch {
+          throw new Error('Could not read your saved records. Please keep this browser data and try again.');
+        }
+      }
+      if (!Array.isArray(parsedTransactions) || !parsedTransactions.every(isDisplayTransaction)) {
+        throw new Error('Could not read your saved records. Please keep this browser data and try again.');
+      }
+      localStorage.setItem(
+        'track_expenser_transactions',
+        JSON.stringify([newTx, ...parsedTransactions])
+      );
     }
+
+    setTransactions((prev) => [newTx, ...prev]);
   };
 
   const handlePhoneLinkedSuccess = (phone: string) => {
@@ -339,16 +408,102 @@ export default function Home() {
         onOpenPhoneModal={() => setIsAuthModalOpen(true)}
         onSignOut={handleSignOut}
         onOpenResetModal={() => setIsResetModalOpen(true)}
+        language={language}
+        onLanguageChange={handleLanguageChange}
       />
 
       {/* Main Container */}
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
+        {isSimpleView && (
+          <section className="mx-auto max-w-3xl space-y-5">
+            <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-8">
+              <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                {isHindi ? 'आपका पैसा, आसानी से' : 'Your money, made simple'}
+              </p>
+              <h1 className="mt-2 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-3xl">
+                {isHindi
+                  ? isPhoneLinked ? 'आपके पैसों का आसान हिसाब' : 'पैसों का हिसाब शुरू करें'
+                  : isPhoneLinked ? 'Your money at a glance' : 'Start keeping a money record'}
+              </h1>
+              <p className="mt-2 text-base leading-relaxed text-zinc-600 dark:text-zinc-300">
+                {isHindi
+                  ? 'खर्च या कमाई जोड़ें। WhatsApp पर रकम लिखें या भुगतान का स्क्रीनशॉट भेजें।'
+                  : 'Add money you spend or receive. You can also send a payment screenshot on WhatsApp.'}
+              </p>
+
+              <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl bg-emerald-50 p-5 dark:bg-emerald-950/30">
+                  <p className="text-sm font-semibold text-emerald-900 dark:text-emerald-200">
+                    {isHindi ? 'इस महीने का खर्च' : 'Spent this month'}
+                  </p>
+                  <p className="mt-2 text-3xl font-bold text-zinc-900 dark:text-zinc-50">
+                    {formatINR(monthSpentPaise, { showPaise: false })}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-zinc-100 p-5 dark:bg-zinc-800">
+                  <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">
+                    {isHindi ? 'आज का खर्च' : 'Spent today'}
+                  </p>
+                  <p className="mt-2 text-3xl font-bold text-zinc-900 dark:text-zinc-50">
+                    {formatINR(todaySpendPaise, { showPaise: false })}
+                  </p>
+                  <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                    {isHindi
+                      ? `${todayTransactions.length} खर्च आज`
+                      : `${todayTransactions.length} expenses today`}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <button
+                  onClick={() => {
+                    setNewTransactionType('expense');
+                    setIsAddModalOpen(true);
+                  }}
+                  className="min-h-14 rounded-2xl bg-emerald-600 px-5 text-lg font-bold text-white shadow-sm transition hover:bg-emerald-500"
+                >
+                  {isHindi ? '+ खर्च जोड़ें' : '+ Add expense'}
+                </button>
+                <button
+                  onClick={() => {
+                    setNewTransactionType('income');
+                    setIsAddModalOpen(true);
+                  }}
+                  className="min-h-14 rounded-2xl border-2 border-emerald-700 px-5 text-lg font-bold text-emerald-800 transition hover:bg-emerald-50 dark:border-emerald-500 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                >
+                  {isHindi ? '+ कमाई जोड़ें' : '+ Add income'}
+                </button>
+              </div>
+            </div>
+
+            <TransactionFeed
+              transactions={transactions}
+              onDeleteTransaction={handleDeleteTransaction}
+              onOpenAddModal={() => {
+                setNewTransactionType('expense');
+                setIsAddModalOpen(true);
+              }}
+              simpleMode
+              language={language}
+              onShowAllTransactions={() => setIsSimpleView(false)}
+            />
+
+            <button
+              onClick={() => setIsSimpleView(false)}
+              className="min-h-12 w-full rounded-xl text-sm font-semibold text-zinc-500 underline underline-offset-4 transition hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
+            >
+              {isHindi ? 'पैसों की और जानकारी' : 'More money details'}
+            </button>
+          </section>
+        )}
+
         {/* Cycle Tracking & Reset Toolbar */}
-        <div className="flex flex-col gap-3 rounded-2xl border border-zinc-200/80 bg-white/90 p-3.5 shadow-2xs dark:border-zinc-800 dark:bg-zinc-900/90 sm:flex-row sm:items-center sm:justify-between">
+        {!isSimpleView && <div className="flex flex-col gap-3 rounded-2xl border border-zinc-200/80 bg-white/90 p-3.5 shadow-2xs dark:border-zinc-800 dark:bg-zinc-900/90 sm:flex-row sm:items-center sm:justify-between">
           {/* Cycle Selector Pills */}
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-              Tracking:
+              {isHindi ? 'समय:' : 'Time:'}
             </span>
             <div className="flex rounded-xl bg-zinc-100 p-0.5 dark:bg-zinc-800">
               <button
@@ -360,7 +515,7 @@ export default function Home() {
                 }`}
               >
                 <Zap className="h-3 w-3 text-amber-500" />
-                <span>This Week</span>
+                <span>{isHindi ? 'इस सप्ताह' : 'This Week'}</span>
               </button>
               <button
                 onClick={() => handleCycleChange('monthly')}
@@ -371,7 +526,7 @@ export default function Home() {
                 }`}
               >
                 <Calendar className="h-3 w-3 text-emerald-500" />
-                <span>This Month</span>
+                <span>{isHindi ? 'इस महीने' : 'This Month'}</span>
               </button>
               <button
                 onClick={() => handleCycleChange('all')}
@@ -382,7 +537,7 @@ export default function Home() {
                 }`}
               >
                 <Layers className="h-3 w-3 text-cyan-500" />
-                <span>All Time</span>
+                <span>{isHindi ? 'पूरा हिसाब' : 'All Time'}</span>
               </button>
             </div>
           </div>
@@ -390,21 +545,33 @@ export default function Home() {
           {/* Active Range & Reset Action */}
           <div className="flex items-center justify-between gap-3 sm:justify-end">
             <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400" suppressHydrationWarning>
-              {cycleRangeLabel}
+              {isHindi
+                ? timeRange === 'weekly'
+                  ? 'इस सप्ताह'
+                  : timeRange === 'monthly'
+                    ? new Date().toLocaleDateString('hi-IN', { month: 'long', year: 'numeric' })
+                    : 'पूरा हिसाब'
+                : cycleRangeLabel}
             </span>
             <button
               onClick={() => setIsResetModalOpen(true)}
               className="flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300"
-              title="Reset cycle or transaction history"
+              title={isHindi ? 'लेन-देन का हिसाब साफ़ करें' : 'Reset cycle or transaction history'}
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              <span>Reset Cycle</span>
+              <span>{isHindi ? 'हिसाब रीसेट करें' : 'Reset cycle'}</span>
             </button>
           </div>
-        </div>
+          <button
+            onClick={() => setIsSimpleView(true)}
+            className="min-h-10 rounded-xl px-3 text-sm font-semibold text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            {isHindi ? 'आसान होम' : 'Simple home'}
+          </button>
+        </div>}
 
         {/* Dashboard Grid */}
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+        {!isSimpleView && <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
           {/* Left / Main Column: Balances, Visual Analytics & Transactions */}
           <div className="space-y-8 lg:col-span-2">
             {/* Live Total Balance & Fluctuation Cockpit */}
@@ -412,14 +579,16 @@ export default function Home() {
               transactions={cycleTransactions}
               startingBalanceRupees={startingBalanceRupees}
               onUpdateStartingBalance={handleUpdateStartingBalance}
+              language={language}
             />
 
             {/* Dual Analytics Row: Safe to Spend Pace & 7-Day Activity Chart */}
             <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-              <SafeToSpendCard pulse={pulse} onUpdateBudget={handleUpdateBudget} />
+              <SafeToSpendCard pulse={pulse} onUpdateBudget={handleUpdateBudget} language={language} />
               <SpendingTrendChart
                 transactions={cycleTransactions}
                 dailyAllowancePaise={pulse.dailySafeAllowancePaise}
+                language={language}
               />
             </div>
 
@@ -427,9 +596,13 @@ export default function Home() {
             <TransactionFeed
               transactions={cycleTransactions}
               onDeleteTransaction={handleDeleteTransaction}
-              onOpenAddModal={() => setIsAddModalOpen(true)}
+              onOpenAddModal={() => {
+                setNewTransactionType('expense');
+                setIsAddModalOpen(true);
+              }}
               onOpenResetModal={() => setIsResetModalOpen(true)}
               startingBalanceRupees={startingBalanceRupees}
+              language={language}
             />
           </div>
 
@@ -440,15 +613,17 @@ export default function Home() {
               isLinked={isPhoneLinked}
               linkedPhone={linkedPhone}
               onSuccess={handlePhoneLinkedSuccess}
+              language={language}
             />
 
             {/* Category Breakdown */}
             <CategoryBreakdown
               categories={categoryItems}
               totalSpendPaise={cycleSpentPaise}
+              language={language}
             />
           </div>
-        </div>
+        </div>}
       </main>
 
       {/* Sign In / Switch Account Modal */}
@@ -457,6 +632,7 @@ export default function Home() {
         onClose={() => setIsAuthModalOpen(false)}
         onSuccess={handlePhoneLinkedSuccess}
         currentPhone={linkedPhone}
+        language={language}
       />
 
       {/* Reset Cycle Modal */}
@@ -465,13 +641,17 @@ export default function Home() {
         onClose={() => setIsResetModalOpen(false)}
         currentScope={timeRange}
         onConfirmReset={handleConfirmReset}
+        language={language}
       />
 
       {/* Manual Add Transaction Modal */}
       <AddTransactionModal
+        key={newTransactionType}
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
+        initialType={newTransactionType}
         onSubmit={handleAddTransaction}
+        language={language}
       />
     </div>
   );

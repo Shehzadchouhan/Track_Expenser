@@ -2,14 +2,17 @@
 
 import React, { useState } from 'react';
 import { Smartphone, Send, CheckCircle2, AlertCircle, RefreshCw, MessageSquare } from 'lucide-react';
+import type { AppLanguage } from '@/lib/i18n';
 
 interface WhatsAppLinkCardProps {
   isLinked: boolean;
   linkedPhone?: string | null;
   onSuccess: (phone: string) => void;
+  language: AppLanguage;
 }
 
-export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess }: WhatsAppLinkCardProps) {
+export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess, language }: WhatsAppLinkCardProps) {
+  const isHindi = language === 'hi';
   const [phone, setPhone] = useState(linkedPhone || '+91');
   const [otp, setOtp] = useState('');
   const [step, setStep] = useState<'phone' | 'otp'>(isLinked ? 'phone' : 'phone');
@@ -35,9 +38,9 @@ export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess }: WhatsAppL
       }
 
       setStep('otp');
-      setSuccessMsg(`6-digit code sent to ${phone} via WhatsApp!`);
-    } catch (err: any) {
-      setError(err.message || 'Error sending code');
+      setSuccessMsg(isHindi ? `WhatsApp पर ${phone} को 6 अंकों का कोड भेजा गया।` : `6-digit code sent to ${phone} via WhatsApp!`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : isHindi ? 'कोड नहीं भेजा जा सका।' : 'Error sending code');
     } finally {
       setLoading(false);
     }
@@ -60,10 +63,10 @@ export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess }: WhatsAppL
         throw new Error(data.error || 'Failed to verify code');
       }
 
-      setSuccessMsg('WhatsApp linked successfully!');
+      setSuccessMsg(isHindi ? 'WhatsApp जुड़ गया!' : 'WhatsApp linked successfully!');
       onSuccess(phone);
-    } catch (err: any) {
-      setError(err.message || 'Invalid code');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : isHindi ? 'गलत कोड।' : 'Invalid code');
     } finally {
       setLoading(false);
     }
@@ -78,21 +81,23 @@ export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess }: WhatsAppL
           </div>
           <div className="flex-1">
             <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-              WhatsApp Active: {linkedPhone}
+              {isHindi ? `WhatsApp जुड़ा है: ${linkedPhone}` : `WhatsApp connected: ${linkedPhone}`}
             </h3>
             <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-              Your number is authenticated. You can log expenses by texting your WhatsApp bot anytime!
+              {isHindi
+                ? 'अब WhatsApp पर संदेश या भुगतान का स्क्रीनशॉट भेजकर खर्च जोड़ें।'
+                : 'Send a message or payment screenshot to your WhatsApp bot to add expenses.'}
             </p>
 
             <div className="mt-4 flex flex-wrap gap-2 text-xs">
               <span className="rounded-full bg-white px-3 py-1 font-medium text-zinc-700 shadow-sm dark:bg-zinc-800 dark:text-zinc-300">
-                💬 <i>"Spent 250 on tea"</i>
+                💬 <i>{isHindi ? '“चाय पर 250 रुपये खर्च”' : '"Spent 250 on tea"'}</i>
               </span>
               <span className="rounded-full bg-white px-3 py-1 font-medium text-zinc-700 shadow-sm dark:bg-zinc-800 dark:text-zinc-300">
-                📸 Share GPay / PhonePe screenshot
+                📸 {isHindi ? 'GPay / PhonePe का स्क्रीनशॉट भेजें' : 'Share GPay / PhonePe screenshot'}
               </span>
               <span className="rounded-full bg-white px-3 py-1 font-medium text-zinc-700 shadow-sm dark:bg-zinc-800 dark:text-zinc-300">
-                ↩️ <i>"undo"</i> to cancel last
+                ↩️ <i>{isHindi ? '“undo”' : '"undo"'}</i> {isHindi ? 'पिछला खर्च हटाएं' : 'to cancel last'}
               </span>
             </div>
 
@@ -103,7 +108,7 @@ export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess }: WhatsAppL
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 text-xs font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-500 hover:scale-[1.01] active:scale-95"
             >
               <MessageSquare className="h-4 w-4" />
-              <span>Open WhatsApp Chat with Bot</span>
+              <span>{isHindi ? 'WhatsApp पर खर्च जोड़ें' : 'Open WhatsApp chat'}</span>
             </a>
           </div>
         </div>
@@ -119,10 +124,10 @@ export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess }: WhatsAppL
         </div>
         <div>
           <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-            Link Your WhatsApp Number
+            {isHindi ? 'अपना WhatsApp नंबर जोड़ें' : 'Link your WhatsApp number'}
           </h3>
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Log expenses instantly via WhatsApp with zero manual entry
+            {isHindi ? 'बिना टाइप किए WhatsApp पर खर्च जोड़ें' : 'Add expenses through WhatsApp without typing here'}
           </p>
         </div>
       </div>
@@ -144,7 +149,7 @@ export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess }: WhatsAppL
       {step === 'phone' ? (
         <form onSubmit={handleRequestOtp} className="mt-4">
           <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
-            Phone Number (with Country Code)
+            {isHindi ? 'फ़ोन नंबर (देश के कोड के साथ)' : 'Phone number (with country code)'}
           </label>
           <div className="mt-1 flex gap-2">
             <input
@@ -165,18 +170,18 @@ export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess }: WhatsAppL
               ) : (
                 <Send className="h-3.5 w-3.5" />
               )}
-              <span>Send OTP</span>
+              <span>{isHindi ? 'कोड भेजें' : 'Send code'}</span>
             </button>
           </div>
           <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-            A 6-digit verification code will be sent to your WhatsApp account.
+            {isHindi ? '6 अंकों का कोड आपके WhatsApp पर भेजा जाएगा।' : 'A 6-digit verification code will be sent to your WhatsApp account.'}
           </p>
         </form>
       ) : (
         <form onSubmit={handleVerifyOtp} className="mt-4">
           <div className="flex items-center justify-between">
             <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
-              Enter 6-digit WhatsApp Code
+              {isHindi ? 'WhatsApp का 6 अंकों का कोड डालें' : 'Enter 6-digit WhatsApp code'}
             </label>
             <button
               type="button"
@@ -186,7 +191,7 @@ export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess }: WhatsAppL
               }}
               className="text-xs text-emerald-600 hover:underline dark:text-emerald-400"
             >
-              Change number
+              {isHindi ? 'नंबर बदलें' : 'Change number'}
             </button>
           </div>
           <div className="mt-1 flex gap-2">
@@ -209,7 +214,7 @@ export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess }: WhatsAppL
               ) : (
                 <CheckCircle2 className="h-3.5 w-3.5" />
               )}
-              <span>Verify & Link</span>
+              <span>{isHindi ? 'कोड जांचें और जोड़ें' : 'Verify & link'}</span>
             </button>
           </div>
         </form>

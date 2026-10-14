@@ -3,6 +3,7 @@
 import React from 'react';
 import { PieChart } from 'lucide-react';
 import { formatINR } from '@/lib/money';
+import { categoryLabel, type AppLanguage } from '@/lib/i18n';
 
 export interface CategorySpendItem {
   id: string;
@@ -15,9 +16,11 @@ export interface CategorySpendItem {
 interface CategoryBreakdownProps {
   categories: CategorySpendItem[];
   totalSpendPaise: number;
+  language: AppLanguage;
 }
 
-export function CategoryBreakdown({ categories, totalSpendPaise }: CategoryBreakdownProps) {
+export function CategoryBreakdown({ categories, totalSpendPaise, language }: CategoryBreakdownProps) {
+  const isHindi = language === 'hi';
   // Sort descending by spend
   const sorted = [...categories].sort((a, b) => b.spendPaise - a.spendPaise);
 
@@ -29,18 +32,18 @@ export function CategoryBreakdown({ categories, totalSpendPaise }: CategoryBreak
             <PieChart className="h-4 w-4" />
           </span>
           <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-            Category Breakdown
+            {isHindi ? 'खर्च का बंटवारा' : 'Category Breakdown'}
           </h3>
         </div>
         <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
-          Total: {formatINR(totalSpendPaise, { showPaise: false })}
+          {isHindi ? 'कुल:' : 'Total:'} {formatINR(totalSpendPaise, { showPaise: false })}
         </span>
       </div>
 
       <div className="mt-5 space-y-3.5">
         {sorted.length === 0 ? (
           <p className="text-center text-xs text-zinc-400 py-6">
-            No category spend recorded this month.
+            {isHindi ? 'इस महीने कोई खर्च दर्ज नहीं है।' : 'No category spend recorded this month.'}
           </p>
         ) : (
           sorted.map((item) => {
@@ -58,10 +61,10 @@ export function CategoryBreakdown({ categories, totalSpendPaise }: CategoryBreak
                       style={{ backgroundColor: item.color }}
                     />
                     <span className="font-semibold text-zinc-800 dark:text-zinc-200">
-                      {item.name}
+                      {categoryLabel(item.name, language)}
                     </span>
                     <span className="text-[11px] text-zinc-400">
-                      ({item.count} {item.count === 1 ? 'tx' : 'txs'})
+                      ({item.count} {isHindi ? 'लेन-देन' : item.count === 1 ? 'record' : 'records'})
                     </span>
                   </div>
                   <div className="flex items-center gap-2">

@@ -9,16 +9,17 @@ import {
   CheckCircle2,
   AlertCircle,
   X,
-  Sparkles,
   ShieldCheck,
   UserCheck,
 } from 'lucide-react';
+import type { AppLanguage } from '@/lib/i18n';
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (phone: string) => void;
   currentPhone?: string | null;
+  language: AppLanguage;
 }
 
 export function AuthModal({
@@ -26,7 +27,9 @@ export function AuthModal({
   onClose,
   onSuccess,
   currentPhone,
+  language,
 }: AuthModalProps) {
+  const isHindi = language === 'hi';
   const [phone, setPhone] = useState(currentPhone || '+91');
   const [otp, setOtp] = useState('');
   const [step, setStep] = useState<'phone' | 'otp'>('phone');
@@ -54,9 +57,13 @@ export function AuthModal({
       }
 
       setStep('otp');
-      setSuccessMsg(`6-digit verification code sent to ${phone} via WhatsApp!`);
-    } catch (err: any) {
-      setError(err?.message || 'Error sending code. Please check your number.');
+      setSuccessMsg(isHindi ? `WhatsApp पर ${phone} को 6 अंकों का कोड भेजा गया।` : `6-digit verification code sent to ${phone} via WhatsApp!`);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : isHindi ? 'कोड नहीं भेजा जा सका। नंबर जांचें।' : 'Error sending code. Please check your number.'
+      );
     } finally {
       setLoading(false);
     }
@@ -82,11 +89,15 @@ export function AuthModal({
         throw new Error(data.error || 'Invalid verification code');
       }
 
-      setSuccessMsg('Signed in successfully!');
+      setSuccessMsg(isHindi ? 'साइन इन हो गया!' : 'Signed in successfully!');
       onSuccess(phone.trim());
       onClose();
-    } catch (err: any) {
-      setError(err?.message || 'Verification failed. Please check the code.');
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : isHindi ? 'कोड जांचें और फिर कोशिश करें।' : 'Verification failed. Please check the code.'
+      );
     } finally {
       setLoading(false);
     }
@@ -111,10 +122,10 @@ export function AuthModal({
           </div>
           <div>
             <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">
-              {currentPhone ? 'Switch Account' : 'Sign In / Register'}
+              {isHindi ? currentPhone ? 'खाता बदलें' : 'साइन इन / रजिस्टर करें' : currentPhone ? 'Switch account' : 'Sign in / register'}
             </h3>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Access your personal AI expense cockpit with zero passwords
+              {isHindi ? 'बिना पासवर्ड के अपने खर्चों का हिसाब रखें।' : 'Access your personal expense tracker without a password.'}
             </p>
           </div>
         </div>
@@ -140,7 +151,7 @@ export function AuthModal({
           <form onSubmit={handleRequestOtp} className="mt-5 space-y-4">
             <div>
               <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                WhatsApp Phone Number
+                {isHindi ? 'WhatsApp फ़ोन नंबर' : 'WhatsApp phone number'}
               </label>
               <div className="relative mt-1.5">
                 <Smartphone className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
@@ -154,7 +165,9 @@ export function AuthModal({
                 />
               </div>
               <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                Include country code (e.g. +91 for India). New users will have an account created automatically.
+                {isHindi
+                  ? 'देश का कोड जोड़ें (भारत के लिए +91)। नए उपयोगकर्ता का खाता अपने आप बनेगा।'
+                  : 'Include country code (e.g. +91 for India). New users get an account automatically.'}
               </p>
             </div>
 
@@ -168,14 +181,14 @@ export function AuthModal({
               ) : (
                 <ArrowRight className="h-4 w-4" />
               )}
-              <span>Continue with WhatsApp</span>
+              <span>{isHindi ? 'WhatsApp से आगे बढ़ें' : 'Continue with WhatsApp'}</span>
             </button>
           </form>
         ) : (
           <form onSubmit={handleVerifyOtp} className="mt-5 space-y-4">
             <div className="flex items-center justify-between">
               <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                Enter 6-digit WhatsApp Code
+                {isHindi ? 'WhatsApp का 6 अंकों का कोड डालें' : 'Enter 6-digit WhatsApp code'}
               </label>
               <button
                 type="button"
@@ -185,7 +198,7 @@ export function AuthModal({
                 }}
                 className="text-xs text-emerald-600 hover:underline dark:text-emerald-400"
               >
-                Change number
+                {isHindi ? 'नंबर बदलें' : 'Change number'}
               </button>
             </div>
 
@@ -213,7 +226,7 @@ export function AuthModal({
               ) : (
                 <CheckCircle2 className="h-4 w-4" />
               )}
-              <span>Verify & Sign In</span>
+              <span>{isHindi ? 'कोड जांचें और साइन इन करें' : 'Verify & sign in'}</span>
             </button>
           </form>
         )}
@@ -222,10 +235,12 @@ export function AuthModal({
         <div className="mt-6 rounded-2xl border border-zinc-100 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-800/40">
           <div className="flex items-center gap-2 text-xs font-medium text-zinc-700 dark:text-zinc-300">
             <ShieldCheck className="h-4 w-4 text-emerald-500" />
-            <span>Secure & Passwordless</span>
+            <span>{isHindi ? 'सुरक्षित और बिना पासवर्ड' : 'Secure & passwordless'}</span>
           </div>
           <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-            New accounts receive a blank slate dashboard. When you text or send payment screenshots to the WhatsApp bot, they sync right here!
+            {isHindi
+              ? 'WhatsApp पर संदेश या भुगतान का स्क्रीनशॉट भेजें, वे यहां दिखेंगे।'
+              : 'Send messages or payment screenshots to the WhatsApp bot to see them here.'}
           </p>
         </div>
       </div>

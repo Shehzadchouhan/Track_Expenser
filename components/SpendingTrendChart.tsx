@@ -1,19 +1,23 @@
 'use client';
 
 import React from 'react';
-import { BarChart3, TrendingUp, Calendar } from 'lucide-react';
+import { BarChart3, Calendar } from 'lucide-react';
 import { formatINR } from '@/lib/money';
 import { DisplayTransaction } from './TransactionFeed';
+import type { AppLanguage } from '@/lib/i18n';
 
 interface SpendingTrendChartProps {
   transactions: DisplayTransaction[];
   dailyAllowancePaise?: number;
+  language: AppLanguage;
 }
 
 export function SpendingTrendChart({
   transactions,
   dailyAllowancePaise = 0,
+  language,
 }: SpendingTrendChartProps) {
+  const isHindi = language === 'hi';
   // Generate the last 7 days (day 0 = today, day 6 = 6 days ago)
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
@@ -33,12 +37,12 @@ export function SpendingTrendChart({
     });
 
     const totalPaise = dayExpenses.reduce((sum, t) => sum + t.amount_paise, 0);
-    const dayLabel = dayDate.toLocaleDateString('en-IN', { weekday: 'short' });
+    const dayLabel = dayDate.toLocaleDateString(isHindi ? 'hi-IN' : 'en-IN', { weekday: 'short' });
     const isToday = dayDate.toDateString() === new Date().toDateString();
 
     return {
       date: dayDate,
-      dayLabel: isToday ? 'Today' : dayLabel,
+      dayLabel: isToday ? isHindi ? 'आज' : 'Today' : dayLabel,
       totalPaise,
       isToday,
       count: dayExpenses.length,
@@ -65,16 +69,16 @@ export function SpendingTrendChart({
           </span>
           <div>
             <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
-              7-Day Spend Activity
+              {isHindi ? '7 दिनों का खर्च' : '7-Day Spend Activity'}
             </h3>
             <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-              Daily burn rate & weekly momentum
+              {isHindi ? 'रोज़ और हफ़्ते का खर्च' : 'Daily spend & weekly activity'}
             </p>
           </div>
         </div>
 
         <div className="text-right">
-          <span className="text-[10px] uppercase font-semibold text-zinc-400 block">7-Day Total</span>
+          <span className="text-[10px] uppercase font-semibold text-zinc-400 block">{isHindi ? '7 दिनों का कुल' : '7-Day Total'}</span>
           <span className="text-sm font-extrabold text-zinc-900 dark:text-zinc-100">
             {formatINR(total7DaysSpendPaise, { showPaise: false })}
           </span>
@@ -127,13 +131,13 @@ export function SpendingTrendChart({
       <div className="mt-4 flex items-center justify-between border-t border-zinc-100 pt-3 text-xs text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
         <span className="flex items-center gap-1.5">
           <Calendar className="h-3.5 w-3.5 text-zinc-400" />
-          <span>Avg: <strong className="text-zinc-800 dark:text-zinc-200">{formatINR(avgDailySpendPaise, { showPaise: false })}/day</strong></span>
+          <span>{isHindi ? 'औसत:' : 'Avg:'} <strong className="text-zinc-800 dark:text-zinc-200">{formatINR(avgDailySpendPaise, { showPaise: false })}/{isHindi ? 'दिन' : 'day'}</strong></span>
         </span>
 
         {dailyAllowancePaise > 0 && (
           <span className="flex items-center gap-1 text-[11px]">
             <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
-            <span>Target: {formatINR(dailyAllowancePaise, { showPaise: false })}</span>
+            <span>{isHindi ? 'लक्ष्य:' : 'Target:'} {formatINR(dailyAllowancePaise, { showPaise: false })}</span>
           </span>
         )}
       </div>

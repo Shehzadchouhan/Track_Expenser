@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Wallet,
 } from 'lucide-react';
+import type { AppLanguage } from '@/lib/i18n';
 
 export type ResetScope = 'reset_weekly' | 'reset_monthly' | 'reset_all';
 
@@ -20,6 +21,7 @@ interface ResetModalProps {
   onClose: () => void;
   currentScope: 'weekly' | 'monthly' | 'all';
   onConfirmReset: (scope: ResetScope, resetStartingBalance: boolean) => Promise<void>;
+  language: AppLanguage;
 }
 
 export function ResetModal({
@@ -27,7 +29,9 @@ export function ResetModal({
   onClose,
   currentScope,
   onConfirmReset,
+  language,
 }: ResetModalProps) {
+  const isHindi = language === 'hi';
   const [selectedScope, setSelectedScope] = useState<ResetScope>(
     currentScope === 'weekly'
       ? 'reset_weekly'
@@ -47,8 +51,12 @@ export function ResetModal({
     try {
       await onConfirmReset(selectedScope, resetBalance);
       onClose();
-    } catch (err: any) {
-      setError(err?.message || 'Failed to complete reset operation');
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : isHindi ? 'हिसाब रीसेट नहीं हुआ। फिर से कोशिश करें।' : 'Failed to reset transactions.'
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -57,11 +65,11 @@ export function ResetModal({
   const getScopeName = () => {
     switch (selectedScope) {
       case 'reset_weekly':
-        return 'This Week';
+        return isHindi ? 'इस सप्ताह' : 'This Week';
       case 'reset_monthly':
-        return 'This Month';
+        return isHindi ? 'इस महीने' : 'This Month';
       case 'reset_all':
-        return 'All Time History';
+        return isHindi ? 'पूरा हिसाब' : 'All-time history';
     }
   };
 
@@ -84,10 +92,10 @@ export function ResetModal({
           </div>
           <div>
             <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">
-              Reset Tracking Cycle
+              {isHindi ? 'लेन-देन का हिसाब रीसेट करें' : 'Reset transaction history'}
             </h3>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Clear accumulated transactions so you stay focused on your active budget without confusing numbers.
+              {isHindi ? 'चुने हुए समय के लेन-देन हटाएं। यह बदलाव वापस नहीं होगा।' : 'Remove transactions for the selected period. This cannot be undone.'}
             </p>
           </div>
         </div>
@@ -102,7 +110,7 @@ export function ResetModal({
         {/* Scope Selection Options */}
         <div className="mt-5 space-y-3">
           <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-            Choose What to Reset
+            {isHindi ? 'क्या रीसेट करना है?' : 'Choose what to reset'}
           </label>
 
           {/* 1. Reset Weekly */}
@@ -127,10 +135,10 @@ export function ResetModal({
                 </div>
                 <div>
                   <h4 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    Reset Current Week
+                    {isHindi ? 'इस सप्ताह का हिसाब' : 'Reset this week'}
                   </h4>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Wipes expenses & income from Monday to today. Starts this week fresh.
+                    {isHindi ? 'सोमवार से आज तक के खर्च और कमाई हटाएं।' : 'Remove expenses and income from Monday through today.'}
                   </p>
                 </div>
               </div>
@@ -166,10 +174,10 @@ export function ResetModal({
                 </div>
                 <div>
                   <h4 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    Reset Current Month
+                    {isHindi ? 'इस महीने का हिसाब' : 'Reset this month'}
                   </h4>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Wipes expenses & income logged in this calendar month for a clean monthly start.
+                    {isHindi ? 'इस महीने के खर्च और कमाई हटाएं।' : 'Remove expenses and income recorded this month.'}
                   </p>
                 </div>
               </div>
@@ -205,10 +213,10 @@ export function ResetModal({
                 </div>
                 <div>
                   <h4 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                    Reset All History (Total Clean Slate)
+                    {isHindi ? 'पूरा हिसाब हटाएं' : 'Reset all history'}
                   </h4>
                   <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                    Permanently deletes all transactions recorded across all time.
+                    {isHindi ? 'अब तक के सभी लेन-देन हमेशा के लिए हटेंगे।' : 'Permanently delete all transactions.'}
                   </p>
                 </div>
               </div>
@@ -229,10 +237,10 @@ export function ResetModal({
             <Wallet className="h-4 w-4 text-zinc-500" />
             <div>
               <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200">
-                Also reset starting balance to ₹0
+                {isHindi ? 'शुरुआती रकम भी ₹0 करें' : 'Also reset starting balance to ₹0'}
               </span>
               <p className="text-[11px] text-zinc-400">
-                Clears manual starting capital so your balance begins at zero.
+                {isHindi ? 'आपके खाते की दिखाई गई रकम शून्य हो जाएगी।' : 'Your displayed account balance will start at zero.'}
               </p>
             </div>
           </div>
@@ -248,7 +256,9 @@ export function ResetModal({
         <div className="mt-4 flex items-center gap-2 rounded-xl bg-amber-50 p-2.5 text-[11px] font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           <span>
-            Transactions cleared under <b>{getScopeName()}</b> will be permanently removed from your dashboard and database.
+            {isHindi
+              ? <><b>{getScopeName()}</b> के लेन-देन हमेशा के लिए हट जाएंगे।</>
+              : <>Transactions under <b>{getScopeName()}</b> will be permanently removed.</>}
           </span>
         </div>
 
@@ -260,7 +270,7 @@ export function ResetModal({
             disabled={isSubmitting}
             className="rounded-xl border border-zinc-200 px-4 py-2 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
           >
-            Cancel
+            {isHindi ? 'रद्द करें' : 'Cancel'}
           </button>
           <button
             type="button"
@@ -277,7 +287,7 @@ export function ResetModal({
             ) : (
               <CheckCircle2 className="h-3.5 w-3.5" />
             )}
-            <span>Confirm Reset</span>
+            <span>{isHindi ? 'हां, रीसेट करें' : 'Confirm reset'}</span>
           </button>
         </div>
       </div>
