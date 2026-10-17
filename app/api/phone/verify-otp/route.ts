@@ -19,11 +19,19 @@ export async function POST(request: NextRequest) {
     const { phone_number, otp_code } = parseResult.data;
     const admin = createAdminClient();
 
+    const digits = phone_number.replace(/\D/g, '');
+    const possiblePhones = [
+      phone_number,
+      `+${digits}`,
+      digits.length === 10 ? `+91${digits}` : null,
+      digits.startsWith('91') ? `+${digits}` : null,
+    ].filter(Boolean) as string[];
+
     // 1. Fetch latest unverified verification request for this phone
     const { data: record, error: fetchError } = await admin
       .from('phone_verifications')
       .select('*')
-      .eq('phone_number', phone_number)
+      .in('phone_number', possiblePhones)
       .is('verified_at', null)
       .order('created_at', { ascending: false })
       .limit(1)
@@ -109,6 +117,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('[Verify OTP] Unexpected error:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Internal Server Error';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

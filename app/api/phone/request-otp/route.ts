@@ -34,12 +34,21 @@ export async function POST(request: NextRequest) {
 
     const admin = createAdminClient();
 
+    const digits = phone_number.replace(/\D/g, '');
+    const possiblePhones = [
+      phone_number,
+      `+${digits}`,
+      digits.length === 10 ? `+91${digits}` : null,
+      digits.startsWith('91') ? `+${digits}` : null,
+    ].filter(Boolean) as string[];
+
     if (!userId) {
       // Check if user already exists in user_settings
       const { data: existingSettings } = await admin
         .from('user_settings')
         .select('user_id')
-        .eq('phone_number', phone_number)
+        .in('phone_number', possiblePhones)
+        .limit(1)
         .maybeSingle();
 
       if (existingSettings?.user_id) {
@@ -49,7 +58,7 @@ export async function POST(request: NextRequest) {
 
     if (!userId) {
       // Find or create an auth user in Supabase for this phone number
-      const cleanPhone = phone_number.replace(/\D/g, '');
+      const cleanPhone = digits;
       const userEmail = `phone_${cleanPhone}@trackexpenser.local`;
 
       const { data: newUser, error: createError } = await admin.auth.admin.createUser({
@@ -65,14 +74,18 @@ export async function POST(request: NextRequest) {
         // If user already exists in auth.users, find their id
         const { data: listData } = await admin.auth.admin.listUsers();
         const existingAuthUser = listData?.users?.find(
-          (u) => u.email === userEmail || u.user_metadata?.phone_number === phone_number
+          (u) =>
+            u.email === userEmail ||
+            (u.user_metadata?.phone_number &&
+              possiblePhones.includes(String(u.user_metadata.phone_number)))
         );
         if (existingAuthUser) {
           userId = existingAuthUser.id;
         } else {
           console.error('[Request OTP] Failed to provision auth user:', createError);
+          const detail = createError?.message ? `: ${createError.message}` : '';
           return NextResponse.json(
-            { error: 'Failed to initialize user account for this phone number' },
+            { error: `Failed to initialize user account for this phone number${detail}` },
             { status: 500 }
           );
         }
@@ -135,6 +148,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('[Request OTP] Unexpected error:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Internal Server Error';
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
