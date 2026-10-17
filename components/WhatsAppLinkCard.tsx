@@ -38,7 +38,16 @@ export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess, language }:
       }
 
       setStep('otp');
-      setSuccessMsg(isHindi ? `WhatsApp पर ${phone} को 6 अंकों का कोड भेजा गया।` : `6-digit code sent to ${phone} via WhatsApp!`);
+      const hint = data.devOtp
+        ? isHindi
+          ? ` (परीक्षण कोड: ${data.devOtp})`
+          : ` (Testing code: ${data.devOtp})`
+        : '';
+      setSuccessMsg(
+        isHindi
+          ? `WhatsApp पर ${phone} को 6 अंकों का कोड भेजा गया।${hint}`
+          : `6-digit code sent to ${phone} via WhatsApp!${hint}`
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : isHindi ? 'कोड नहीं भेजा जा सका।' : 'Error sending code');
     } finally {
@@ -158,7 +167,7 @@ export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess, language }:
               onChange={(e) => setPhone(e.target.value)}
               placeholder="+919876543210"
               required
-              className="flex-1 rounded-xl border border-zinc-300 bg-zinc-50 px-3.5 py-2 text-sm text-zinc-900 focus:border-emerald-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+              className="flex-1 rounded-xl border border-zinc-300 bg-zinc-50 px-3.5 py-2 text-sm font-semibold text-zinc-900 placeholder-zinc-400 transition-colors focus:border-emerald-500 focus:bg-white focus:text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-500 dark:focus:border-emerald-400 dark:focus:bg-zinc-800 dark:focus:text-white dark:focus:ring-emerald-400/20"
             />
             <button
               type="submit"
@@ -202,7 +211,7 @@ export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess, language }:
               onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
               placeholder="123456"
               required
-              className="w-36 rounded-xl border border-zinc-300 bg-zinc-50 px-3.5 py-2 text-center text-lg font-mono font-bold tracking-widest text-zinc-900 focus:border-emerald-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+              className="w-36 rounded-xl border border-zinc-300 bg-zinc-50 px-3.5 py-2 text-center font-mono text-lg font-bold tracking-widest text-zinc-900 placeholder-zinc-300 transition-colors focus:border-emerald-500 focus:bg-white focus:text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-600 dark:focus:border-emerald-400 dark:focus:bg-zinc-800 dark:focus:text-white dark:focus:ring-emerald-400/20"
             />
             <button
               type="submit"

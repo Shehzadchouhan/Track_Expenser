@@ -290,7 +290,7 @@ export function AddTransactionModal({
               value={merchant}
               onChange={(event) => setMerchant(event.target.value)}
               placeholder={isHindi ? 'जैसे: खाना, बस' : 'For example: lunch, bus'}
-              className="mt-2 min-h-14 w-full rounded-2xl border border-zinc-300 bg-zinc-50 px-4 text-base text-zinc-900 focus:border-emerald-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+              className="mt-2 min-h-14 w-full rounded-2xl border border-zinc-300 bg-zinc-50 px-4 text-base font-medium text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:bg-white focus:text-zinc-900 focus:outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-500 dark:focus:border-emerald-400 dark:focus:bg-zinc-800 dark:focus:text-white"
             />
           </div>
 
@@ -354,7 +354,7 @@ export function AddTransactionModal({
                   type="text"
                   value={note}
                   onChange={(event) => setNote(event.target.value)}
-                  className="mt-2 min-h-12 w-full rounded-xl border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  className="mt-2 min-h-12 w-full rounded-xl border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:bg-white focus:text-zinc-900 focus:outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-500 dark:focus:border-emerald-400 dark:focus:bg-zinc-800 dark:focus:text-white"
                 />
               </div>
             </div>

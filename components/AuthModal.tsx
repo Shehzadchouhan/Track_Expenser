@@ -57,7 +57,16 @@ export function AuthModal({
       }
 
       setStep('otp');
-      setSuccessMsg(isHindi ? `WhatsApp पर ${phone} को 6 अंकों का कोड भेजा गया।` : `6-digit verification code sent to ${phone} via WhatsApp!`);
+      const hint = data.devOtp
+        ? isHindi
+          ? ` (परीक्षण कोड: ${data.devOtp})`
+          : ` (Testing code: ${data.devOtp})`
+        : '';
+      setSuccessMsg(
+        isHindi
+          ? `WhatsApp पर ${phone} को 6 अंकों का कोड भेजा गया।${hint}`
+          : `6-digit verification code sent to ${phone} via WhatsApp!${hint}`
+      );
     } catch (err) {
       setError(
         err instanceof Error
@@ -161,7 +170,7 @@ export function AuthModal({
                   onChange={(e) => setPhone(e.target.value)}
                   placeholder="+919876543210"
                   required
-                  className="w-full rounded-xl border border-zinc-300 bg-zinc-50/50 py-2.5 pl-10 pr-4 text-sm text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  className="w-full rounded-xl border border-zinc-300 bg-zinc-50 py-2.5 pl-10 pr-4 text-sm font-semibold text-zinc-900 placeholder-zinc-400 transition-colors focus:border-emerald-500 focus:bg-white focus:text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-500 dark:focus:border-emerald-400 dark:focus:bg-zinc-800 dark:focus:text-white dark:focus:ring-emerald-400/20"
                 />
               </div>
               <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
@@ -212,7 +221,7 @@ export function AuthModal({
                 placeholder="123456"
                 required
                 autoFocus
-                className="w-full rounded-xl border border-zinc-300 bg-zinc-50/50 py-2.5 pl-10 pr-4 text-center font-mono text-lg font-bold tracking-widest text-zinc-900 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                className="w-full rounded-xl border border-zinc-300 bg-zinc-50 py-2.5 pl-10 pr-4 text-center font-mono text-xl font-bold tracking-widest text-zinc-900 placeholder-zinc-300 transition-colors focus:border-emerald-500 focus:bg-white focus:text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-600 dark:focus:border-emerald-400 dark:focus:bg-zinc-800 dark:focus:text-white dark:focus:ring-emerald-400/20"
               />
             </div>
 
@@ -228,6 +237,35 @@ export function AuthModal({
               )}
               <span>{isHindi ? 'कोड जांचें और साइन इन करें' : 'Verify & sign in'}</span>
             </button>
+
+            <div className="text-center text-[11px] text-zinc-500 dark:text-zinc-400">
+              {isHindi ? (
+                <span>
+                  WhatsApp पर कोड नहीं मिला?{' '}
+                  <a
+                    href="https://wa.me/15556319114?text=Hi"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-emerald-600 underline dark:text-emerald-400"
+                  >
+                    बॉट को WhatsApp पर Hi भेजें
+                  </a>
+                </span>
+              ) : (
+                <span>
+                  Didn&apos;t receive it on WhatsApp?{' '}
+                  <a
+                    href="https://wa.me/15556319114?text=Hi"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-emerald-600 underline dark:text-emerald-400"
+                  >
+                    Click to say &quot;Hi&quot; to the Bot
+                  </a>{' '}
+                  to activate.
+                </span>
+              )}
+            </div>
           </form>
         )}
 

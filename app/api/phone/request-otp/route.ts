@@ -114,13 +114,15 @@ export async function POST(request: NextRequest) {
       `🔐 *Track Expenser Verification*\n\nYour 6-digit verification code is: *${otpCode}*\n\nThis code expires in ${OTP_EXPIRY_MINUTES} minutes. If you did not request this, please ignore this message.`
     );
 
+    const isDev = process.env.NODE_ENV !== 'production';
+
     if (!sendResult.success) {
       console.warn('[Request OTP] WhatsApp message delivery notice:', sendResult.error);
-      // In development / sandbox mode, allow proceeding even if WhatsApp API test sandbox has restrictions
       return NextResponse.json({
         success: true,
         message: `OTP generated! (Check terminal or WhatsApp: ${otpCode})`,
         deliveryNotice: sendResult.error,
+        devOtp: isDev ? otpCode : undefined,
         expiresInMinutes: OTP_EXPIRY_MINUTES,
       });
     }
@@ -128,6 +130,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: 'Verification code sent to WhatsApp',
+      devOtp: isDev ? otpCode : undefined,
       expiresInMinutes: OTP_EXPIRY_MINUTES,
     });
   } catch (error) {
