@@ -1,277 +1,258 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { getAuthenticatedUser } from '@/lib/supabase/auth';
+import { MAX_PAISE, MIN_PAISE } from '@/lib/constants';
 
-export async function GET(request: NextRequest) {
+const DashboardMutationSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('update_budget'),
+    monthlyBudgetPaise: z.number().int().min(MIN_PAISE).max(MAX_PAISE),
+  }),
+  z.object({
+    action: z.literal('update_starting_balance'),
+    startingBalancePaise: z.number().int().min(0).max(MAX_PAISE),
+  }),
+  z.object({
+    action: z.literal('add_transaction'),
+    type: z.enum(['income', 'expense']),
+    amount_paise: z.number().int().min(MIN_PAISE).max(MAX_PAISE),
+    category_name: z.string().trim().min(1).max(40),
+    merchant: z.string().trim().max(100).nullable().optional(),
+    note: z.string().trim().max(280).nullable().optional(),
+    occurred_at: z.string().datetime().optional(),
+  }),
+]);
+
+const ResetActionSchema = z.enum(['reset_weekly', 'reset_monthly', 'reset_all']);
+
+function unauthorizedResponse() {
+  return NextResponse.json({ error: 'Sign in to access your account.' }, { status: 401 });
+}
+
+export async function GET() {
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const rawPhone = (searchParams.get('phone') || '').trim();
+    const user = await getAuthenticatedUser();
+    if (!user) return unauthorizedResponse();
+
     const admin = createAdminClient();
-
-    // 1. Fetch user by phone or fallback to active verified user
-    let userQuery = admin
+    const { data: userSettings, error: settingsError } = await admin
       .from('user_settings')
-      .select('user_id, phone_number, phone_verified, monthly_budget_paise, currency, timezone')
-      .eq('phone_verified', true);
+      .select('user_id, phone_number, phone_verified, monthly_budget_paise, starting_balance_paise, currency, timezone')
+      .eq('user_id', user.id)
+      .maybeSingle();
 
-    if (rawPhone) {
-      const digits = rawPhone.replace(/\D/g, '');
-      const possiblePhones = [
-        rawPhone,
-        `+${digits}`,
-        digits.length === 10 ? `+91${digits}` : null,
-        digits.startsWith('91') ? `+${digits}` : null,
-      ].filter(Boolean) as string[];
-
-      userQuery = userQuery.in('phone_number', possiblePhones);
+    if (settingsError) {
+      console.error('[Dashboard API] Failed to fetch user settings:', settingsError);
+      return NextResponse.json({ error: 'Failed to fetch dashboard data.' }, { status: 500 });
     }
 
-    const { data: userSettings } = await userQuery.limit(1).maybeSingle();
-
-    if (!userSettings) {
-      return NextResponse.json({ linked: false, transactions: [] }, { status: 200 });
+    if (!userSettings?.phone_verified) {
+      return NextResponse.json({ linked: false, transactions: [] });
     }
 
-    // 2. Fetch categories for user
-    const { data: categories } = await admin
-      .from('categories')
-      .select('id, name, color, kind')
-      .eq('user_id', userSettings.user_id);
+    const [{ data: categories, error: categoriesError }, { data: txList, error: txError }] =
+      await Promise.all([
+        admin
+          .from('categories')
+          .select('id, name, color, kind')
+          .eq('user_id', user.id),
+        admin
+          .from('transactions')
+          .select('id, type, amount_paise, merchant, note, category_id, source, occurred_at')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(50),
+      ]);
 
-    const categoryMap = new Map((categories || []).map((c) => [c.id, c]));
+    if (categoriesError || txError) {
+      console.error('[Dashboard API] Failed to fetch account data:', categoriesError ?? txError);
+      return NextResponse.json({ error: 'Failed to fetch dashboard data.' }, { status: 500 });
+    }
 
-    // 3. Fetch transactions (latest created first)
-    const { data: txList } = await admin
-      .from('transactions')
-      .select('*')
-      .eq('user_id', userSettings.user_id)
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    const formattedTransactions = (txList || []).map((t) => {
-      const cat = t.category_id ? categoryMap.get(t.category_id) : null;
+    const categoryMap = new Map((categories ?? []).map((category) => [category.id, category]));
+    const transactions = (txList ?? []).map((transaction) => {
+      const category = transaction.category_id ? categoryMap.get(transaction.category_id) : null;
       return {
-        id: t.id,
-        type: t.type,
-        amount_paise: Number(t.amount_paise),
-        merchant: t.merchant || null,
-        note: t.note || null,
-        category_name: cat?.name || 'General',
-        category_color: cat?.color || '#64748B',
-        source: t.source,
-        occurred_at: t.occurred_at,
+        id: transaction.id,
+        type: transaction.type,
+        amount_paise: Number(transaction.amount_paise),
+        merchant: transaction.merchant,
+        note: transaction.note,
+        category_name: category?.name ?? 'General',
+        category_color: category?.color ?? '#64748B',
+        source: transaction.source,
+        occurred_at: transaction.occurred_at,
       };
     });
 
     return NextResponse.json({
       linked: true,
       phone: userSettings.phone_number,
-      monthlyBudgetPaise: userSettings.monthly_budget_paise || 2500000,
-      currency: userSettings.currency || 'INR',
-      timezone: userSettings.timezone || 'Asia/Kolkata',
-      transactions: formattedTransactions,
+      monthlyBudgetPaise: userSettings.monthly_budget_paise ?? 2500000,
+      startingBalancePaise: userSettings.starting_balance_paise,
+      currency: userSettings.currency,
+      timezone: userSettings.timezone,
+      transactions,
     });
   } catch (error) {
     console.error('[Dashboard API] Error fetching dashboard data:', error);
-    return NextResponse.json({ error: 'Failed to fetch dashboard data' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to fetch dashboard data.' }, { status: 500 });
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { phone, action } = body;
+    const user = await getAuthenticatedUser();
+    if (!user) return unauthorizedResponse();
 
-    if (!phone) {
-      return NextResponse.json({ error: 'Phone number required' }, { status: 400 });
+    const parseResult = DashboardMutationSchema.safeParse(await request.json());
+    if (!parseResult.success) {
+      return NextResponse.json({ error: parseResult.error.issues[0]?.message ?? 'Invalid request.' }, { status: 400 });
     }
 
     const admin = createAdminClient();
+    const mutation = parseResult.data;
 
-    const { data: userSettings } = await admin
-      .from('user_settings')
-      .select('user_id')
-      .eq('phone_number', phone)
-      .eq('phone_verified', true)
-      .maybeSingle();
-
-    if (!userSettings) {
-      return NextResponse.json({ error: 'User not found or unverified' }, { status: 404 });
-    }
-
-    if (action === 'update_budget') {
-      const { monthlyBudgetPaise } = body;
-      await admin
+    if (mutation.action === 'update_budget') {
+      const { error } = await admin
         .from('user_settings')
-        .update({ monthly_budget_paise: monthlyBudgetPaise })
-        .eq('user_id', userSettings.user_id);
+        .upsert(
+          { user_id: user.id, monthly_budget_paise: mutation.monthlyBudgetPaise },
+          { onConflict: 'user_id' }
+        );
 
-      return NextResponse.json({ success: true, monthlyBudgetPaise });
-    }
-
-    if (action === 'add_transaction') {
-      const { type, amount_paise, category_name, merchant, note } = body;
-
-      // Find matching category
-      const { data: categories } = await admin
-        .from('categories')
-        .select('id, name')
-        .eq('user_id', userSettings.user_id);
-
-      const matchedCat = categories?.find(
-        (c) => c.name.toLowerCase() === (category_name || '').toLowerCase()
-      );
-
-      const { data: newTx, error: txError } = await admin
-        .from('transactions')
-        .insert({
-          user_id: userSettings.user_id,
-          type,
-          amount_paise,
-          category_id: matchedCat?.id || null,
-          merchant: merchant || null,
-          note: note || null,
-          source: 'web',
-          occurred_at: new Date().toISOString(),
-        })
-        .select('*')
-        .single();
-
-      if (txError) {
-        return NextResponse.json({ error: txError.message }, { status: 500 });
+      if (error) {
+        console.error('[Dashboard API] Failed to update budget:', error);
+        return NextResponse.json({ error: 'Could not save the budget.' }, { status: 500 });
       }
 
-      return NextResponse.json({ success: true, transaction: newTx });
+      return NextResponse.json({
+        success: true,
+        monthlyBudgetPaise: mutation.monthlyBudgetPaise,
+      });
     }
 
-    return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+    if (mutation.action === 'update_starting_balance') {
+      const { error } = await admin
+        .from('user_settings')
+        .upsert(
+          { user_id: user.id, starting_balance_paise: mutation.startingBalancePaise },
+          { onConflict: 'user_id' }
+        );
+
+      if (error) {
+        console.error('[Dashboard API] Failed to update starting balance:', error);
+        return NextResponse.json({ error: 'Could not save the starting balance.' }, { status: 500 });
+      }
+
+      return NextResponse.json({
+        success: true,
+        startingBalancePaise: mutation.startingBalancePaise,
+      });
+    }
+
+    const { data: categories, error: categoriesError } = await admin
+      .from('categories')
+      .select('id, name')
+      .eq('user_id', user.id);
+
+    if (categoriesError) {
+      console.error('[Dashboard API] Failed to fetch categories:', categoriesError);
+      return NextResponse.json({ error: 'Could not save the transaction.' }, { status: 500 });
+    }
+
+    const matchedCategory = categories?.find(
+      (category) => category.name.toLowerCase() === mutation.category_name.toLowerCase()
+    );
+    const { data: newTransaction, error: transactionError } = await admin
+      .from('transactions')
+      .insert({
+        user_id: user.id,
+        type: mutation.type,
+        amount_paise: mutation.amount_paise,
+        category_id: matchedCategory?.id ?? null,
+        merchant: mutation.merchant || null,
+        note: mutation.note || null,
+        source: 'web',
+        occurred_at: mutation.occurred_at ?? new Date().toISOString(),
+      })
+      .select('id')
+      .single();
+
+    if (transactionError || !newTransaction) {
+      console.error('[Dashboard API] Failed to create transaction:', transactionError);
+      return NextResponse.json({ error: 'Could not save the transaction.' }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, transaction: newTransaction });
   } catch (error) {
     console.error('[Dashboard API] Error in dashboard mutation:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: 'Could not save the requested change.' }, { status: 500 });
   }
 }
 
 export async function DELETE(request: NextRequest) {
   try {
-    const searchParams = request.nextUrl.searchParams;
-    const txId = searchParams.get('id');
-    const rawPhone = (searchParams.get('phone') || '').trim();
-    const action = searchParams.get('action'); // 'reset_weekly' | 'reset_monthly' | 'reset_all'
+    const user = await getAuthenticatedUser();
+    if (!user) return unauthorizedResponse();
+
+    const transactionId = request.nextUrl.searchParams.get('id');
+    const rawAction = request.nextUrl.searchParams.get('action');
     const admin = createAdminClient();
 
-    // 1. Identify user if phone is provided
-    let userId: string | null = null;
-    if (rawPhone) {
-      const digits = rawPhone.replace(/\D/g, '');
-      const possiblePhones = [
-        rawPhone,
-        `+${digits}`,
-        digits.length === 10 ? `+91${digits}` : null,
-        digits.startsWith('91') ? `+${digits}` : null,
-      ].filter(Boolean) as string[];
-
-      const { data: userSettings } = await admin
-        .from('user_settings')
-        .select('user_id')
-        .in('phone_number', possiblePhones)
-        .eq('phone_verified', true)
-        .limit(1)
-        .maybeSingle();
-
-      if (userSettings) {
-        userId = userSettings.user_id;
+    if (transactionId) {
+      const idResult = z.string().uuid().safeParse(transactionId);
+      if (!idResult.success) {
+        return NextResponse.json({ error: 'Invalid transaction ID.' }, { status: 400 });
       }
-    }
 
-    // 2. Delete single transaction by ID
-    if (txId) {
-      let deleteQuery = admin.from('transactions').delete().eq('id', txId);
-      if (userId) {
-        deleteQuery = deleteQuery.eq('user_id', userId);
-      }
-      const { error } = await deleteQuery;
+      const { error } = await admin
+        .from('transactions')
+        .delete()
+        .eq('id', idResult.data)
+        .eq('user_id', user.id);
+
       if (error) {
         console.error('[Dashboard API] Failed to delete transaction:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ error: 'Could not delete this transaction.' }, { status: 500 });
       }
-      return NextResponse.json({ success: true, deletedId: txId });
+      return NextResponse.json({ success: true, deletedId: idResult.data });
     }
 
-    // 3. Reset transactions by cycle
-    if (action) {
-      if (!userId) {
-        const { data: fallbackUser } = await admin
-          .from('user_settings')
-          .select('user_id')
-          .eq('phone_verified', true)
-          .limit(1)
-          .maybeSingle();
-        if (fallbackUser) {
-          userId = fallbackUser.user_id;
-        } else {
-          return NextResponse.json({ error: 'User not found or unverified' }, { status: 404 });
-        }
-      }
+    const actionResult = ResetActionSchema.safeParse(rawAction);
+    if (!actionResult.success) {
+      return NextResponse.json(
+        { error: rawAction ? 'Unknown reset action.' : 'Missing transaction ID or reset action.' },
+        { status: 400 }
+      );
+    }
 
+    const action = actionResult.data;
+    let query = admin.from('transactions').delete().eq('user_id', user.id);
+
+    if (action === 'reset_weekly') {
       const now = new Date();
-
-      if (action === 'reset_weekly') {
-        // Start of current week (Monday 00:00:00)
-        const d = new Date(now);
-        const day = d.getDay();
-        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-        const startOfWeek = new Date(d.setDate(diff));
-        startOfWeek.setHours(0, 0, 0, 0);
-
-        const { error } = await admin
-          .from('transactions')
-          .delete()
-          .eq('user_id', userId)
-          .gte('occurred_at', startOfWeek.toISOString());
-
-        if (error) {
-          console.error('[Dashboard API] Failed to reset weekly transactions:', error);
-          return NextResponse.json({ error: error.message }, { status: 500 });
-        }
-        return NextResponse.json({ success: true, action: 'reset_weekly' });
-      }
-
-      if (action === 'reset_monthly') {
-        // Start of current month (1st of month 00:00:00)
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-
-        const { error } = await admin
-          .from('transactions')
-          .delete()
-          .eq('user_id', userId)
-          .gte('occurred_at', startOfMonth.toISOString());
-
-        if (error) {
-          console.error('[Dashboard API] Failed to reset monthly transactions:', error);
-          return NextResponse.json({ error: error.message }, { status: 500 });
-        }
-        return NextResponse.json({ success: true, action: 'reset_monthly' });
-      }
-
-      if (action === 'reset_all') {
-        const { error } = await admin
-          .from('transactions')
-          .delete()
-          .eq('user_id', userId);
-
-        if (error) {
-          console.error('[Dashboard API] Failed to reset all transactions:', error);
-          return NextResponse.json({ error: error.message }, { status: 500 });
-        }
-        return NextResponse.json({ success: true, action: 'reset_all' });
-      }
-
-      return NextResponse.json({ error: 'Unknown reset action' }, { status: 400 });
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+      const startOfWeek = new Date(now.setDate(diff));
+      startOfWeek.setHours(0, 0, 0, 0);
+      query = query.gte('occurred_at', startOfWeek.toISOString());
+    } else if (action === 'reset_monthly') {
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      query = query.gte('occurred_at', startOfMonth.toISOString());
     }
 
-    return NextResponse.json({ error: 'Missing id or action parameter' }, { status: 400 });
+    const { error } = await query;
+    if (error) {
+      console.error(`[Dashboard API] Failed to ${action}:`, error);
+      return NextResponse.json({ error: 'Could not reset transactions.' }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, action });
   } catch (error) {
     console.error('[Dashboard API] Error in dashboard delete:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: 'Could not complete the requested operation.' }, { status: 500 });
   }
 }
-

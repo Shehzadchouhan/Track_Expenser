@@ -74,7 +74,6 @@ export async function parseTextTransaction(
 
   const ai = getGeminiClient();
   const primaryModel = getGeminiModel();
-  const fallbackModel = primaryModel === 'gemini-3.5-flash' ? 'gemini-3.8-flash' : 'gemini-3.5-flash';
   const dateStr = now.toISOString();
 
   const prompt = `

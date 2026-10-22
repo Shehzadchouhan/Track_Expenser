@@ -191,6 +191,10 @@ export async function processIncomingWhatsAppMessage(
     .single();
 
   if (insertError) {
+    if (insertError.code === '23505' && msg.messageId) {
+      return { status: 'ignored', messageId: msg.messageId };
+    }
+
     console.error('[WhatsApp Bot] Insert transaction error:', insertError);
     await whatsappClient.sendTextMessage(
       msg.fromPhone,

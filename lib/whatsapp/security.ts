@@ -13,10 +13,9 @@ export function verifyWebhookSignature(
   signatureHeader: string | null,
   appSecret: string | undefined = process.env.WHATSAPP_APP_SECRET
 ): boolean {
-  // If app secret is not configured
   if (!appSecret) {
-    console.warn('WHATSAPP_APP_SECRET is not set; skipping HMAC verification.');
-    return true;
+    console.error('WHATSAPP_APP_SECRET is not set; rejecting the webhook request.');
+    return false;
   }
 
   if (!signatureHeader) {

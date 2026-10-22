@@ -1,6 +1,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+require('@next/env').loadEnvConfig(__dirname);
 
 const cloudflaredPath = path.join(__dirname, 'cloudflared.exe');
 if (!fs.existsSync(cloudflaredPath)) {
@@ -26,20 +27,22 @@ function processOutput(chunk) {
   if (match && !detectedUrl) {
     detectedUrl = match[0];
     const webhookUrl = `${detectedUrl}/api/webhook/whatsapp`;
-    const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN || 'track_expenser_verify_token_2026';
+    const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN?.trim();
 
     console.log('\n========================================================================');
     console.log('✅ CLOUDFLARE TUNNEL IS ONLINE!');
     console.log('========================================================================');
     console.log(`🌐 Public Tunnel URL: ${detectedUrl}`);
     console.log(`🔗 Webhook Callback:  ${webhookUrl}`);
-    console.log(`🔑 Verify Token:      ${verifyToken}`);
+    console.log(
+      `🔑 Verify Token:      ${verifyToken ? 'Use WHATSAPP_VERIFY_TOKEN from your environment' : 'Not configured; webhook verification will fail'}`
+    );
     console.log('========================================================================');
     console.log('👉 META DEVELOPER PORTAL SETUP:');
     console.log('1. Go to: https://developers.facebook.com/apps/1886927829336799/whatsapp-business/configuration/');
     console.log('2. In "Webhook" section, click "Edit"');
     console.log(`3. Paste Callback URL: ${webhookUrl}`);
-    console.log(`4. Paste Verify Token: ${verifyToken}`);
+    console.log('4. Enter the configured WHATSAPP_VERIFY_TOKEN');
     console.log('5. Click "Verify and Save"');
     console.log('========================================================================\n');
     console.log('Listening for incoming WhatsApp messages and screenshots...\n');

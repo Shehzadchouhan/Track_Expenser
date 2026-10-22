@@ -14,6 +14,7 @@ import {
 import { Logo } from './Logo';
 import type { AppLanguage } from '@/lib/i18n';
 import { Languages } from 'lucide-react';
+import { getWhatsAppBusinessUrl } from '@/lib/whatsapp/link';
 
 interface NavbarProps {
   isPhoneLinked: boolean;
@@ -49,7 +50,7 @@ export function Navbar({
   }, []);
 
   // WhatsApp bot direct link
-  const botWhatsAppUrl = 'https://wa.me/15556319114?text=Spent%20';
+  const botWhatsAppUrl = getWhatsAppBusinessUrl('Spent ');
   const isHindi = language === 'hi';
 
   return (
@@ -62,18 +63,20 @@ export function Navbar({
         {/* Status & Actions */}
         <div className="flex items-center gap-2.5">
           {/* Quick One-Tap WhatsApp Bot Trigger */}
-          <a
-            href={botWhatsAppUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-500 hover:scale-[1.02] active:scale-95 sm:px-3.5"
-            title={isHindi ? 'खर्च जोड़ने के लिए WhatsApp खोलें' : 'Open WhatsApp to record an expense'}
-            aria-label={isHindi ? 'WhatsApp में खर्च दर्ज करें' : 'Open WhatsApp to record an expense'}
-          >
-            <MessageCircle className="h-3.5 w-3.5 fill-white text-emerald-600" />
-            <span className="hidden sm:inline">{isHindi ? 'WhatsApp पर खर्च जोड़ें' : 'Chat on WhatsApp'}</span>
-            <span className="sm:hidden">WhatsApp</span>
-          </a>
+          {botWhatsAppUrl && (
+            <a
+              href={botWhatsAppUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-500 hover:scale-[1.02] active:scale-95 sm:px-3.5"
+              title={isHindi ? 'खर्च जोड़ने के लिए WhatsApp खोलें' : 'Open WhatsApp to record an expense'}
+              aria-label={isHindi ? 'WhatsApp में खर्च दर्ज करें' : 'Open WhatsApp to record an expense'}
+            >
+              <MessageCircle className="h-3.5 w-3.5 fill-white text-emerald-600" />
+              <span className="hidden sm:inline">{isHindi ? 'WhatsApp पर खर्च जोड़ें' : 'Chat on WhatsApp'}</span>
+              <span className="sm:hidden">WhatsApp</span>
+            </a>
+          )}
 
           <button
             type="button"

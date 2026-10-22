@@ -168,6 +168,7 @@ export interface Database {
           phone_number: string | null;
           phone_verified: boolean;
           monthly_budget_paise: number | null;
+          starting_balance_paise: number;
           currency: string;
           timezone: string;
           created_at: string;
@@ -178,6 +179,7 @@ export interface Database {
           phone_number?: string | null;
           phone_verified?: boolean;
           monthly_budget_paise?: number | null;
+          starting_balance_paise?: number;
           currency?: string;
           timezone?: string;
           created_at?: string;
@@ -188,6 +190,7 @@ export interface Database {
           phone_number?: string | null;
           phone_verified?: boolean;
           monthly_budget_paise?: number | null;
+          starting_balance_paise?: number;
           currency?: string;
           timezone?: string;
           created_at?: string;
@@ -208,7 +211,9 @@ export interface Database {
           id: string;
           user_id: string;
           phone_number: string;
-          otp_code: string;
+          otp_code: string | null;
+          otp_hash: string | null;
+          intent: 'sign_in' | 'link';
           attempts: number;
           expires_at: string;
           verified_at: string | null;
@@ -218,7 +223,9 @@ export interface Database {
           id?: string;
           user_id: string;
           phone_number: string;
-          otp_code: string;
+          otp_code?: string | null;
+          otp_hash?: string | null;
+          intent?: 'sign_in' | 'link';
           attempts?: number;
           expires_at: string;
           verified_at?: string | null;
@@ -228,7 +235,9 @@ export interface Database {
           id?: string;
           user_id?: string;
           phone_number?: string;
-          otp_code?: string;
+          otp_code?: string | null;
+          otp_hash?: string | null;
+          intent?: 'sign_in' | 'link';
           attempts?: number;
           expires_at?: string;
           verified_at?: string | null;
@@ -297,6 +306,23 @@ export interface Database {
           remaining_today_paise: number;
           days_remaining_in_month: number;
           is_over_budget: boolean;
+        }[];
+      };
+      reserve_phone_otp_request: {
+        Args: { p_phone_number: string };
+        Returns: { allowed: boolean; retry_after_seconds: number }[];
+      };
+      consume_phone_otp: {
+        Args: {
+          p_phone_number: string;
+          p_otp_hash: string;
+          p_authenticated_user_id: string | null;
+        };
+        Returns: {
+          verification_status: string;
+          verified_user_id: string | null;
+          remaining_attempts: number;
+          verification_intent: 'sign_in' | 'link' | null;
         }[];
       };
     };

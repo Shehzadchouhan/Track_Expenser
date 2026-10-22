@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
-import { Mic, PlusCircle, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ImagePlus, LoaderCircle, Mic, PlusCircle, X } from 'lucide-react';
+import Image from 'next/image';
 import { DEFAULT_CATEGORIES } from '@/lib/constants';
 import { categoryLabel, type AppLanguage } from '@/lib/i18n';
 
@@ -32,6 +33,7 @@ interface AddTransactionModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialType?: 'expense' | 'income';
+  isAuthenticated: boolean;
   language: AppLanguage;
   onSubmit: (data: {
     type: 'expense' | 'income';
@@ -39,6 +41,7 @@ interface AddTransactionModalProps {
     category: string;
     merchant?: string;
     note?: string;
+    occurredAt?: string;
   }) => Promise<void>;
 }
 
@@ -63,10 +66,18 @@ function extractDescription(transcript: string): string {
     .trim();
 }
 
+function toDateTimeLocal(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return localDate.toISOString().slice(0, 16);
+}
+
 export function AddTransactionModal({
   isOpen,
   onClose,
   initialType = 'expense',
+  isAuthenticated,
   language,
   onSubmit,
 }: AddTransactionModalProps) {
@@ -79,7 +90,19 @@ export function AddTransactionModal({
   const [showDetails, setShowDetails] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [isScanning, setIsScanning] = useState(false);
+  const [occurredAt, setOccurredAt] = useState<string | undefined>();
+  const [scanConfidence, setScanConfidence] = useState<number | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const imagePreviewUrlRef = useRef<string | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (imagePreviewUrlRef.current) URL.revokeObjectURL(imagePreviewUrlRef.current);
+    };
+  }, []);
 
   if (!isOpen) return null;
 
@@ -88,7 +111,95 @@ export function AddTransactionModal({
     recognitionRef.current?.stop();
     recognitionRef.current = null;
     setIsListening(false);
+    if (imagePreviewUrlRef.current) URL.revokeObjectURL(imagePreviewUrlRef.current);
+    imagePreviewUrlRef.current = null;
+    setImagePreviewUrl(null);
+    setOccurredAt(undefined);
+    setScanConfidence(null);
     onClose();
+  };
+
+  const handleScanImage = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.size === 0 || file.size > 6 * 1024 * 1024) {
+      setError(isHindi ? 'तस्वीर 6 MB से छोटी होनी चाहिए।' : 'Choose an image smaller than 6 MB.');
+      return;
+    }
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setError(isHindi ? 'JPG, PNG या WebP तस्वीर चुनें।' : 'Choose a JPG, PNG, or WebP image.');
+      return;
+    }
+
+    if (imagePreviewUrlRef.current) URL.revokeObjectURL(imagePreviewUrlRef.current);
+    imagePreviewUrlRef.current = URL.createObjectURL(file);
+    setImagePreviewUrl(imagePreviewUrlRef.current);
+    setError(null);
+    setIsScanning(true);
+    setAmount('');
+    setMerchant('');
+    setNote('');
+    setScanConfidence(null);
+    setOccurredAt(undefined);
+
+    try {
+      const formData = new FormData();
+      formData.set('image', file);
+      const response = await fetch('/api/transactions/parse-image', {
+        method: 'POST',
+        body: formData,
+      });
+      const result: {
+        error?: string;
+        transaction?: {
+          type: 'expense' | 'income';
+          amount_paise: number;
+          category: string;
+          merchant?: string | null;
+          note?: string | null;
+          occurred_at?: string;
+          confidence: number;
+        };
+      } = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || 'Could not scan this image.');
+      }
+
+      const extracted = result.transaction;
+      if (
+        !extracted ||
+        !Number.isFinite(extracted.amount_paise) ||
+        extracted.amount_paise <= 0 ||
+        !['expense', 'income'].includes(extracted.type)
+      ) {
+        throw new Error(isHindi ? 'तस्वीर में लेन-देन नहीं मिला।' : 'No valid transaction was found in this image.');
+      }
+      const matchedCategory = DEFAULT_CATEGORIES.find(
+        (item) =>
+          item.name.toLowerCase() === String(extracted.category).toLowerCase() &&
+          item.kind === extracted.type
+      );
+      setType(extracted.type);
+      setCategory(
+        matchedCategory?.name ??
+          (extracted.type === 'income' ? 'Other Income' : 'Other Expense')
+      );
+      setAmount((extracted.amount_paise / 100).toFixed(2).replace(/\.00$/, ''));
+      setMerchant(extracted.merchant || '');
+      setNote(extracted.note || '');
+      setOccurredAt(extracted.occurred_at);
+      setScanConfidence(extracted.confidence);
+      setShowDetails(true);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : isHindi
+            ? 'तस्वीर पढ़ी नहीं जा सकी। कृपया फिर कोशिश करें।'
+            : 'Could not read this image. Please try again.'
+      );
+    } finally {
+      setIsScanning(false);
+    }
   };
 
   const startVoiceEntry = () => {
@@ -178,10 +289,13 @@ export function AddTransactionModal({
         category,
         merchant: merchant.trim() || undefined,
         note: note.trim() || undefined,
+        occurredAt,
       });
       setAmount('');
       setMerchant('');
       setNote('');
+      setOccurredAt(undefined);
+      setScanConfidence(null);
       setShowDetails(false);
       handleClose();
     } catch (err) {
@@ -225,6 +339,62 @@ export function AddTransactionModal({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5 p-5">
+          <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-800/60">
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              capture="environment"
+              className="hidden"
+              aria-label={isHindi ? 'रसीद या लेन-देन की तस्वीर चुनें' : 'Choose receipt or transaction image'}
+              onChange={(event) => {
+                void handleScanImage(event.currentTarget.files?.[0]);
+                event.currentTarget.value = '';
+              }}
+            />
+            <button
+              type="button"
+              disabled={!isAuthenticated || isScanning || loading}
+              onClick={() => imageInputRef.current?.click()}
+              className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-emerald-700 px-4 text-sm font-bold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-500 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+            >
+              {isScanning ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <ImagePlus className="h-5 w-5" />}
+              {isScanning
+                ? isHindi ? 'तस्वीर पढ़ रहे हैं…' : 'Reading image…'
+                : isHindi ? 'रसीद / स्क्रीनशॉट स्कैन करें' : 'Scan receipt / screenshot'}
+            </button>
+            <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+              {isAuthenticated
+                ? isHindi
+                  ? 'JPG, PNG या WebP, अधिकतम 6 MB। तस्वीर सेव नहीं की जाती। सेव करने से पहले जानकारी जाँचें।'
+                  : 'JPG, PNG, or WebP, up to 6 MB. Images are not stored. Review details before saving.'
+                : isHindi
+                  ? 'तस्वीर स्कैन करने के लिए पहले अपने खाते में साइन इन करें।'
+                  : 'Sign in to scan an image into your account.'}
+            </p>
+            {imagePreviewUrl && (
+              <div className="mt-3 flex items-start gap-3">
+                <Image
+                  src={imagePreviewUrl}
+                  alt={isHindi ? 'चुनी हुई लेन-देन की तस्वीर' : 'Selected transaction image'}
+                  width={96}
+                  height={96}
+                  unoptimized
+                  className="max-h-24 max-w-24 rounded-lg border border-zinc-200 object-contain dark:border-zinc-700"
+                />
+                <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                  {isScanning
+                    ? isHindi ? 'जानकारी निकाल रहे हैं…' : 'Extracting transaction details…'
+                    : scanConfidence !== null
+                      ? isHindi
+                        ? 'जानकारी भर दी गई है। कृपया जाँचें और फिर सेव करें।'
+                        : 'Details filled in. Please review them before saving.'
+                      : isHindi ? 'तस्वीर स्कैन नहीं हुई। विवरण हाथ से भरें।' : 'Image was not scanned. Enter the details manually.'}
+                </p>
+              </div>
+            )}
+          </div>
+
           <div className="flex gap-3">
             <button
               type="button"
@@ -357,6 +527,22 @@ export function AddTransactionModal({
                   className="mt-2 min-h-12 w-full rounded-xl border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:bg-white focus:text-zinc-900 focus:outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-500 dark:focus:border-emerald-400 dark:focus:bg-zinc-800 dark:focus:text-white"
                 />
               </div>
+              {occurredAt && (
+                <div>
+                  <label htmlFor="transaction-occurred-at" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                    {isHindi ? 'लेन-देन की तारीख और समय' : 'Transaction date and time'}
+                  </label>
+                  <input
+                    id="transaction-occurred-at"
+                    type="datetime-local"
+                    value={toDateTimeLocal(occurredAt)}
+                    onChange={(event) =>
+                      setOccurredAt(event.target.value ? new Date(event.target.value).toISOString() : undefined)
+                    }
+                    className="mt-2 min-h-12 w-full rounded-xl border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  />
+                </div>
+              )}
             </div>
           )}
 
@@ -368,7 +554,7 @@ export function AddTransactionModal({
 
           <button
             type="submit"
-            disabled={loading || isListening}
+            disabled={loading || isListening || isScanning}
             className="min-h-14 w-full rounded-2xl bg-emerald-600 px-4 text-lg font-bold text-white shadow-sm transition hover:bg-emerald-500 disabled:opacity-50"
           >
             {loading

@@ -35,4 +35,9 @@ describe('WhatsApp Webhook Security (HMAC-SHA256)', () => {
     expect(verifyWebhookSignature(rawBody, '', secret)).toBe(false);
     expect(verifyWebhookSignature(rawBody, 'md5=abcdef123456', secret)).toBe(false);
   });
+
+  it('rejects requests when the app secret is not configured', () => {
+    const validHash = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+    expect(verifyWebhookSignature(rawBody, `sha256=${validHash}`, undefined)).toBe(false);
+  });
 });

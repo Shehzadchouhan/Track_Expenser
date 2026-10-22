@@ -74,6 +74,7 @@ export const PhoneVerificationRequestSchema = z.object({
       E164_PHONE_REGEX,
       'Invalid phone number format. Must be E.164 international format (e.g. +919876543210)'
     ),
+  intent: z.enum(['sign_in', 'link']).default('sign_in'),
 });
 
 export const PhoneVerificationConfirmSchema = z.object({

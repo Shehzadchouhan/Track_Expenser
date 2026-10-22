@@ -6,6 +6,18 @@ import { PhoneVerificationRequestSchema } from '@/lib/schemas';
 import { whatsappClient } from '@/lib/whatsapp/client';
 import { OTP_EXPIRY_MINUTES } from '@/lib/constants';
 
+function hashOtp(phoneNumber: string, otpCode: string): string {
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serviceRoleKey) {
+    throw new Error('Missing environment variable: SUPABASE_SERVICE_ROLE_KEY');
+  }
+
+  return crypto
+    .createHmac('sha256', serviceRoleKey)
+    .update(`${phoneNumber}:${otpCode}`)
+    .digest('hex');
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -18,137 +30,176 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { phone_number } = parseResult.data;
+    const { phone_number: phoneNumber, intent } = parseResult.data;
+    const supabase = await createClient();
+    const {
+      data: { user: authenticatedUser },
+    } = await supabase.auth.getUser();
 
-    // 1. Determine or provision user ID (supports logged-in user or guest web session)
-    let userId: string | null = null;
-    try {
-      const supabaseUser = await createClient();
-      const { data: { user } } = await supabaseUser.auth.getUser();
-      if (user) {
-        userId = user.id;
-      }
-    } catch {
-      // Guest web session
+    if (intent === 'link' && !authenticatedUser) {
+      return NextResponse.json({ error: 'Sign in before linking a WhatsApp number.' }, { status: 401 });
     }
 
     const admin = createAdminClient();
+    const { data: rateLimit, error: rateLimitError } = await admin
+      .rpc('reserve_phone_otp_request', { p_phone_number: phoneNumber })
+      .single();
 
-    const digits = phone_number.replace(/\D/g, '');
-    const possiblePhones = [
-      phone_number,
-      `+${digits}`,
-      digits.length === 10 ? `+91${digits}` : null,
-      digits.startsWith('91') ? `+${digits}` : null,
-    ].filter(Boolean) as string[];
-
-    if (!userId) {
-      // Check if user already exists in user_settings
-      const { data: existingSettings } = await admin
-        .from('user_settings')
-        .select('user_id')
-        .in('phone_number', possiblePhones)
-        .limit(1)
-        .maybeSingle();
-
-      if (existingSettings?.user_id) {
-        userId = existingSettings.user_id;
-      }
+    if (rateLimitError || !rateLimit) {
+      console.error('[Request OTP] Failed to reserve rate limit:', rateLimitError);
+      return NextResponse.json({ error: 'Could not request a verification code.' }, { status: 500 });
     }
 
-    if (!userId) {
-      // Find or create an auth user in Supabase for this phone number
-      const cleanPhone = digits;
-      const userEmail = `phone_${cleanPhone}@trackexpenser.local`;
-
-      const { data: newUser, error: createError } = await admin.auth.admin.createUser({
-        email: userEmail,
-        email_confirm: true,
-        user_metadata: { phone_number },
-        password: crypto.randomBytes(16).toString('hex'),
-      });
-
-      if (newUser?.user?.id) {
-        userId = newUser.user.id;
-      } else {
-        // If user already exists in auth.users, find their id
-        const { data: listData } = await admin.auth.admin.listUsers();
-        const existingAuthUser = listData?.users?.find(
-          (u) =>
-            u.email === userEmail ||
-            (u.user_metadata?.phone_number &&
-              possiblePhones.includes(String(u.user_metadata.phone_number)))
-        );
-        if (existingAuthUser) {
-          userId = existingAuthUser.id;
-        } else {
-          console.error('[Request OTP] Failed to provision auth user:', createError);
-          const detail = createError?.message ? `: ${createError.message}` : '';
-          return NextResponse.json(
-            { error: `Failed to initialize user account for this phone number${detail}` },
-            { status: 500 }
-          );
-        }
-      }
-
-      // Ensure user_settings row exists for this user
-      await admin.from('user_settings').upsert(
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
         {
-          user_id: userId,
-          phone_number: phone_number,
+          error: 'Too many code requests. Please wait before trying again.',
+          retryAfterSeconds: rateLimit.retry_after_seconds,
         },
-        { onConflict: 'user_id' }
+        {
+          status: 429,
+          headers: { 'Retry-After': String(rateLimit.retry_after_seconds) },
+        }
       );
     }
 
-    // 2. Generate secure 6-digit OTP code
+    const { data: existingSettings, error: settingsLookupError } = await admin
+      .from('user_settings')
+      .select('user_id, phone_number, phone_verified')
+      .eq('phone_number', phoneNumber)
+      .maybeSingle();
+
+    if (settingsLookupError) {
+      console.error('[Request OTP] Failed to look up phone:', settingsLookupError);
+      return NextResponse.json({ error: 'Could not initialize this account.' }, { status: 500 });
+    }
+
+    if (
+      intent === 'link' &&
+      existingSettings &&
+      existingSettings.user_id !== authenticatedUser?.id
+    ) {
+      return NextResponse.json(
+        { error: 'This phone number is already linked to another account.' },
+        { status: 409 }
+      );
+    }
+
+    if (intent === 'link' && authenticatedUser) {
+      const { data: currentSettings, error: currentSettingsError } = await admin
+        .from('user_settings')
+        .select('phone_number, phone_verified')
+        .eq('user_id', authenticatedUser.id)
+        .maybeSingle();
+
+      if (currentSettingsError) {
+        console.error('[Request OTP] Failed to inspect current account:', currentSettingsError);
+        return NextResponse.json({ error: 'Could not initialize this account.' }, { status: 500 });
+      }
+
+      if (
+        currentSettings?.phone_verified &&
+        currentSettings.phone_number &&
+        currentSettings.phone_number !== phoneNumber
+      ) {
+        return NextResponse.json(
+          { error: 'Unlink the current verified number before linking another.' },
+          { status: 409 }
+        );
+      }
+    }
+
+    let userId = intent === 'link' ? authenticatedUser?.id ?? null : existingSettings?.user_id ?? null;
+
+    if (!userId && intent === 'sign_in') {
+      const { data: priorRequest, error: priorRequestError } = await admin
+        .from('phone_verifications')
+        .select('user_id')
+        .eq('phone_number', phoneNumber)
+        .is('verified_at', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (priorRequestError) {
+        console.error('[Request OTP] Failed to find pending account:', priorRequestError);
+        return NextResponse.json({ error: 'Could not initialize this account.' }, { status: 500 });
+      }
+      userId = priorRequest?.user_id ?? null;
+    }
+
+    if (!userId) {
+      const digits = phoneNumber.replace(/\D/g, '');
+      const userEmail = `phone_${digits}@trackexpenser.local`;
+      const { data: newUser, error: createError } = await admin.auth.admin.createUser({
+        email: userEmail,
+        email_confirm: true,
+        user_metadata: { phone_number: phoneNumber },
+        password: crypto.randomBytes(32).toString('hex'),
+      });
+
+      if (createError || !newUser.user) {
+        console.error('[Request OTP] Failed to provision auth user:', createError);
+        return NextResponse.json({ error: 'Could not initialize this account.' }, { status: 500 });
+      }
+      userId = newUser.user.id;
+    }
+
     const otpCode = crypto.randomInt(100000, 1000000).toString();
-    const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000).toISOString();
-
-    console.log(`[Request OTP] >>> Generated OTP for ${phone_number}: ${otpCode} <<<`);
-
-    // 3. Store in phone_verifications table
     const { error: insertError } = await admin.from('phone_verifications').insert({
       user_id: userId,
-      phone_number,
-      otp_code: otpCode,
+      phone_number: phoneNumber,
+      otp_code: null,
+      otp_hash: hashOtp(phoneNumber, otpCode),
+      intent,
       attempts: 0,
-      expires_at: expiresAt,
+      expires_at: new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000).toISOString(),
     });
 
     if (insertError) {
       console.error('[Request OTP] Failed to insert verification:', insertError);
-      return NextResponse.json({ error: 'Failed to create verification request' }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to create verification request.' }, { status: 500 });
     }
 
-    // 4. Send code via WhatsApp
     const sendResult = await whatsappClient.sendTextMessage(
-      phone_number,
+      phoneNumber,
       `🔐 *Track Expenser Verification*\n\nYour 6-digit verification code is: *${otpCode}*\n\nThis code expires in ${OTP_EXPIRY_MINUTES} minutes. If you did not request this, please ignore this message.`
     );
-
     const isDev = process.env.NODE_ENV !== 'production';
 
     if (!sendResult.success) {
       console.warn('[Request OTP] WhatsApp message delivery notice:', sendResult.error);
+      await admin
+        .from('phone_verifications')
+        .update({ expires_at: new Date().toISOString() })
+        .eq('phone_number', phoneNumber)
+        .is('verified_at', null);
+
+      if (!isDev) {
+        return NextResponse.json(
+          { error: 'WhatsApp could not deliver the verification code. Check the sender configuration.' },
+          { status: 502 }
+        );
+      }
+
       return NextResponse.json({
         success: true,
-        message: `OTP generated! (Check terminal or WhatsApp: ${otpCode})`,
+        deliveryStatus: 'failed',
         deliveryNotice: sendResult.error,
-        devOtp: isDev ? otpCode : undefined,
+        devOtp: otpCode,
         expiresInMinutes: OTP_EXPIRY_MINUTES,
       });
     }
 
     return NextResponse.json({
       success: true,
+      deliveryStatus: 'sent',
       message: 'Verification code sent to WhatsApp',
       devOtp: isDev ? otpCode : undefined,
       expiresInMinutes: OTP_EXPIRY_MINUTES,
     });
   } catch (error) {
     console.error('[Request OTP] Unexpected error:', error);
-    const message = error instanceof Error ? error.message : 'Internal Server Error';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: 'Could not request a verification code.' }, { status: 500 });
   }
 }

@@ -9,23 +9,17 @@ export async function createClient() {
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   )?.trim();
 
-  // If credentials are not yet added in .env.local, use fallback to avoid server crashes
   if (!url || !key) {
-    return createServerClient<Database>(
-      'https://placeholder-project.supabase.co',
-      'placeholder-anon-key',
-      {
-        cookies: {
-          getAll() {
-            return cookieStore.getAll();
-          },
-          setAll() {},
-        },
-      }
-    );
+    throw new Error('Missing Supabase URL or publishable key');
   }
 
   return createServerClient<Database>(url, key, {
+    cookieOptions: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+    },
     cookies: {
       getAll() {
         return cookieStore.getAll();

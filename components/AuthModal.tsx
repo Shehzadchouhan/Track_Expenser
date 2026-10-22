@@ -13,6 +13,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import type { AppLanguage } from '@/lib/i18n';
+import { getWhatsAppBusinessUrl } from '@/lib/whatsapp/link';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -30,6 +31,7 @@ export function AuthModal({
   language,
 }: AuthModalProps) {
   const isHindi = language === 'hi';
+  const botWhatsAppUrl = getWhatsAppBusinessUrl('Hi');
   const [phone, setPhone] = useState(currentPhone || '+91');
   const [otp, setOtp] = useState('');
   const [step, setStep] = useState<'phone' | 'otp'>('phone');
@@ -57,6 +59,15 @@ export function AuthModal({
       }
 
       setStep('otp');
+      if (data.deliveryStatus === 'failed') {
+        setError(
+          isHindi
+            ? `WhatsApp पर कोड नहीं भेजा जा सका। यह स्थानीय परीक्षण कोड है: ${data.devOtp}`
+            : `WhatsApp could not deliver the code. Local development code: ${data.devOtp}`
+        );
+        return;
+      }
+
       const hint = data.devOtp
         ? isHindi
           ? ` (परीक्षण कोड: ${data.devOtp})`
@@ -242,27 +253,40 @@ export function AuthModal({
               {isHindi ? (
                 <span>
                   WhatsApp पर कोड नहीं मिला?{' '}
-                  <a
-                    href="https://wa.me/15556319114?text=Hi"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium text-emerald-600 underline dark:text-emerald-400"
-                  >
-                    बॉट को WhatsApp पर Hi भेजें
-                  </a>
+                  {botWhatsAppUrl ? (
+                    <>
+                      <a
+                        href={botWhatsAppUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-medium text-emerald-600 underline dark:text-emerald-400"
+                      >
+                        सही WhatsApp बॉट को Hi भेजें
+                      </a>
+                      {' '}और फिर नया कोड मांगें। यह वेबसाइट में साइन इन नहीं करता।
+                    </>
+                  ) : (
+                    'WhatsApp बॉट नंबर अभी सेट नहीं है।'
+                  )}
                 </span>
               ) : (
                 <span>
                   Didn&apos;t receive it on WhatsApp?{' '}
-                  <a
-                    href="https://wa.me/15556319114?text=Hi"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium text-emerald-600 underline dark:text-emerald-400"
-                  >
-                    Click to say &quot;Hi&quot; to the Bot
-                  </a>{' '}
-                  to activate.
+                  {botWhatsAppUrl ? (
+                    <>
+                      <a
+                        href={botWhatsAppUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-medium text-emerald-600 underline dark:text-emerald-400"
+                      >
+                        Open the correct WhatsApp bot and send &quot;Hi&quot;
+                      </a>
+                      . Then request a new code here. This does not sign you in.
+                    </>
+                  ) : (
+                    'The WhatsApp bot number has not been configured.'
+                  )}
                 </span>
               )}
             </div>

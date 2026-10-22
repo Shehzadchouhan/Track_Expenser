@@ -68,12 +68,18 @@ export default function Home() {
     document.documentElement.lang = language;
   }, [language]);
 
-  // Fetch live dashboard data from Supabase if phone is linked
-  const loadDashboardData = useCallback(async (phone: string) => {
-    if (!phone) return;
+  // The server resolves account identity from the Supabase session cookie.
+  const loadDashboardData = useCallback(async () => {
     try {
-      const res = await fetch(`/api/dashboard?phone=${encodeURIComponent(phone)}`);
-      if (!res.ok) return;
+      const res = await fetch('/api/dashboard');
+      if (!res.ok) {
+        if (res.status === 401) {
+          setIsPhoneLinked(false);
+          setLinkedPhone(null);
+          setTransactions([]);
+        }
+        return false;
+      }
       const data = await res.json();
       if (data.linked) {
         setIsPhoneLinked(true);
@@ -81,37 +87,42 @@ export default function Home() {
         if (data.monthlyBudgetPaise) {
           setMonthlyBudgetPaise(data.monthlyBudgetPaise);
         }
+        if (typeof data.startingBalancePaise === 'number') {
+          setStartingBalanceRupees(data.startingBalancePaise / 100);
+        }
         // Always set transactions when data.transactions is returned (even if empty [])
         if (Array.isArray(data.transactions)) {
           setTransactions(data.transactions);
         }
+        return true;
       }
+      setIsPhoneLinked(false);
+      setLinkedPhone(null);
+      return false;
     } catch (err) {
       console.warn('[Dashboard] Error refreshing live data:', err);
+      return false;
     }
   }, []);
 
-  // Restore stored phone link, starting balance, and cycle on initial mount
+  // Restore the authenticated account first, then load browser-only guest data.
   useEffect(() => {
-    const savedPhone = localStorage.getItem('track_expenser_phone') || '';
-    const savedStartingBalance = localStorage.getItem('track_expenser_starting_balance');
-    const savedCycle = localStorage.getItem('track_expenser_cycle') as 'weekly' | 'monthly' | 'all' | null;
+    let active = true;
+    const restore = async () => {
+      const hasAccount = await loadDashboardData();
+      if (!active || hasAccount) return;
 
-    if (savedStartingBalance) {
-      const parsed = parseFloat(savedStartingBalance);
-      if (!isNaN(parsed) && parsed >= 0) {
-        setStartingBalanceRupees(parsed);
+      localStorage.removeItem('track_expenser_phone');
+      const savedStartingBalance = localStorage.getItem('track_expenser_starting_balance');
+      const savedCycle = localStorage.getItem('track_expenser_cycle');
+      const parsedBalance = savedStartingBalance ? Number.parseFloat(savedStartingBalance) : NaN;
+      if (Number.isFinite(parsedBalance) && parsedBalance >= 0) {
+        setStartingBalanceRupees(parsedBalance);
       }
-    }
+      if (savedCycle && ['weekly', 'monthly', 'all'].includes(savedCycle)) {
+        setTimeRange(savedCycle as 'weekly' | 'monthly' | 'all');
+      }
 
-    if (savedCycle && ['weekly', 'monthly', 'all'].includes(savedCycle)) {
-      setTimeRange(savedCycle);
-    }
-
-    if (savedPhone) {
-      setLinkedPhone(savedPhone);
-      loadDashboardData(savedPhone);
-    } else {
       const savedTransactions = localStorage.getItem('track_expenser_transactions');
       if (savedTransactions) {
         try {
@@ -125,17 +136,22 @@ export default function Home() {
           console.warn('[Dashboard] Could not restore saved local transactions:', err);
         }
       }
-    }
+
+    };
+    void restore();
+    return () => {
+      active = false;
+    };
   }, [loadDashboardData]);
 
   // Periodic polling for new WhatsApp expenses (5s live pulse)
   useEffect(() => {
     if (!linkedPhone) return;
     const interval = setInterval(() => {
-      loadDashboardData(linkedPhone);
+      loadDashboardData();
     }, 5000);
     return () => clearInterval(interval);
-  }, [linkedPhone, loadDashboardData]);
+  }, [isPhoneLinked, linkedPhone, loadDashboardData]);
 
   // Cycle range start dates
   const { startOfWeek, startOfMonth, cycleRangeLabel } = useMemo(() => {
@@ -244,26 +260,54 @@ export default function Home() {
 
   const handleUpdateBudget = async (newBudgetRupees: number) => {
     const paise = Math.round(newBudgetRupees * 100);
-    setMonthlyBudgetPaise(paise);
 
     if (linkedPhone) {
       try {
-        await fetch('/api/dashboard', {
+        const response = await fetch('/api/dashboard', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            phone: linkedPhone,
             action: 'update_budget',
             monthlyBudgetPaise: paise,
           }),
         });
-      } catch (err) {
-        console.warn('Failed to persist budget update:', err);
+        if (!response.ok) {
+          const result = await response.json();
+          throw new Error(result.error || 'Could not save the budget.');
+        }
+      } catch (error) {
+        console.error('[Dashboard] Failed to persist budget update:', error);
+        window.alert('Could not save the budget. Please try again.');
+        return;
       }
     }
+
+    setMonthlyBudgetPaise(paise);
   };
 
-  const handleUpdateStartingBalance = (newBalance: number) => {
+  const handleUpdateStartingBalance = async (newBalance: number) => {
+    if (linkedPhone) {
+      try {
+        const response = await fetch('/api/dashboard', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'update_starting_balance',
+            startingBalancePaise: Math.round(newBalance * 100),
+          }),
+        });
+        if (!response.ok) {
+          const result = await response.json();
+          throw new Error(result.error || 'Could not save the starting balance.');
+        }
+        setStartingBalanceRupees(newBalance);
+      } catch (error) {
+        console.error('[Dashboard] Failed to save starting balance:', error);
+        window.alert('Could not save the starting balance. Please try again.');
+      }
+      return;
+    }
+
     setStartingBalanceRupees(newBalance);
     localStorage.setItem('track_expenser_starting_balance', newBalance.toString());
   };
@@ -272,7 +316,7 @@ export default function Home() {
   const handleDeleteTransaction = async (id: string) => {
     if (linkedPhone) {
       const response = await fetch(
-        `/api/dashboard?id=${encodeURIComponent(id)}&phone=${encodeURIComponent(linkedPhone)}`,
+        `/api/dashboard?id=${encodeURIComponent(id)}`,
         { method: 'DELETE' }
       );
       const responseData = await response.json();
@@ -290,7 +334,7 @@ export default function Home() {
   const handleConfirmReset = async (scope: ResetScope, resetStartingBalance: boolean) => {
     if (linkedPhone) {
       const res = await fetch(
-        `/api/dashboard?action=${encodeURIComponent(scope)}&phone=${encodeURIComponent(linkedPhone)}`,
+        `/api/dashboard?action=${encodeURIComponent(scope)}`,
         { method: 'DELETE' }
       );
       if (!res.ok) {
@@ -314,8 +358,23 @@ export default function Home() {
     }
 
     if (resetStartingBalance) {
+      if (linkedPhone) {
+        const response = await fetch('/api/dashboard', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'update_starting_balance',
+            startingBalancePaise: 0,
+          }),
+        });
+        if (!response.ok) {
+          const result = await response.json();
+          throw new Error(result.error || 'Could not reset the starting balance.');
+        }
+      } else {
+        localStorage.setItem('track_expenser_starting_balance', '0');
+      }
       setStartingBalanceRupees(0);
-      localStorage.setItem('track_expenser_starting_balance', '0');
     }
   };
 
@@ -325,6 +384,7 @@ export default function Home() {
     category: string;
     merchant?: string;
     note?: string;
+    occurredAt?: string;
   }) => {
     const cat = DEFAULT_CATEGORIES.find((c) => c.name === data.category);
     const amount_paise = Math.round(data.amountRupees * 100);
@@ -337,7 +397,7 @@ export default function Home() {
       category_name: data.category,
       category_color: cat?.color || '#64748B',
       source: 'web',
-      occurred_at: new Date().toISOString(),
+      occurred_at: data.occurredAt ?? new Date().toISOString(),
     };
 
     if (linkedPhone) {
@@ -345,13 +405,13 @@ export default function Home() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone: linkedPhone,
           action: 'add_transaction',
           type: data.type,
           amount_paise,
           category_name: data.category,
           merchant: data.merchant,
           note: data.note,
+          occurred_at: data.occurredAt,
         }),
       });
       const resData = await res.json();
@@ -384,19 +444,31 @@ export default function Home() {
   const handlePhoneLinkedSuccess = (phone: string) => {
     setIsPhoneLinked(true);
     setLinkedPhone(phone);
+    setTransactions([]);
+    setStartingBalanceRupees(50000);
+    setMonthlyBudgetPaise(2500000);
     setIsAuthModalOpen(false);
-    localStorage.setItem('track_expenser_phone', phone);
-    loadDashboardData(phone);
+    void loadDashboardData();
   };
 
   // Sign out / switch account
-  const handleSignOut = () => {
-    localStorage.removeItem('track_expenser_phone');
-    localStorage.removeItem('track_expenser_starting_balance');
-    setIsPhoneLinked(false);
-    setLinkedPhone(null);
-    setTransactions([]);
-    setStartingBalanceRupees(0);
+  const handleSignOut = async () => {
+    try {
+      const response = await fetch('/api/auth/sign-out', { method: 'POST' });
+      if (!response.ok) {
+        throw new Error('Could not sign out. Please try again.');
+      }
+
+      localStorage.removeItem('track_expenser_phone');
+      localStorage.removeItem('track_expenser_starting_balance');
+      setIsPhoneLinked(false);
+      setLinkedPhone(null);
+      setTransactions([]);
+      setStartingBalanceRupees(0);
+    } catch (error) {
+      console.error('[Dashboard] Sign out failed:', error);
+      window.alert('Could not sign out. Please try again.');
+    }
   };
 
   return (
@@ -650,6 +722,7 @@ export default function Home() {
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         initialType={newTransactionType}
+        isAuthenticated={isPhoneLinked}
         onSubmit={handleAddTransaction}
         language={language}
       />

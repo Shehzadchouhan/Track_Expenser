@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Smartphone, Send, CheckCircle2, AlertCircle, RefreshCw, MessageSquare } from 'lucide-react';
 import type { AppLanguage } from '@/lib/i18n';
+import { getWhatsAppBusinessUrl } from '@/lib/whatsapp/link';
 
 interface WhatsAppLinkCardProps {
   isLinked: boolean;
@@ -13,6 +14,7 @@ interface WhatsAppLinkCardProps {
 
 export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess, language }: WhatsAppLinkCardProps) {
   const isHindi = language === 'hi';
+  const botWhatsAppUrl = getWhatsAppBusinessUrl('Spent ');
   const [phone, setPhone] = useState(linkedPhone || '+91');
   const [otp, setOtp] = useState('');
   const [step, setStep] = useState<'phone' | 'otp'>(isLinked ? 'phone' : 'phone');
@@ -29,7 +31,7 @@ export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess, language }:
       const res = await fetch('/api/phone/request-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone_number: phone }),
+        body: JSON.stringify({ phone_number: phone, intent: 'sign_in' }),
       });
 
       const data = await res.json();
@@ -38,6 +40,15 @@ export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess, language }:
       }
 
       setStep('otp');
+      if (data.deliveryStatus === 'failed') {
+        setError(
+          isHindi
+            ? `WhatsApp पर कोड नहीं भेजा जा सका। स्थानीय परीक्षण कोड: ${data.devOtp}`
+            : `WhatsApp could not deliver the code. Local development code: ${data.devOtp}`
+        );
+        return;
+      }
+
       const hint = data.devOtp
         ? isHindi
           ? ` (परीक्षण कोड: ${data.devOtp})`
@@ -110,15 +121,17 @@ export function WhatsAppLinkCard({ isLinked, linkedPhone, onSuccess, language }:
               </span>
             </div>
 
-            <a
-              href="https://wa.me/15556319114?text=Spent%20"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 text-xs font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-500 hover:scale-[1.01] active:scale-95"
-            >
-              <MessageSquare className="h-4 w-4" />
-              <span>{isHindi ? 'WhatsApp पर खर्च जोड़ें' : 'Open WhatsApp chat'}</span>
-            </a>
+            {botWhatsAppUrl && (
+              <a
+                href={botWhatsAppUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 text-xs font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-500 hover:scale-[1.01] active:scale-95"
+              >
+                <MessageSquare className="h-4 w-4" />
+                <span>{isHindi ? 'WhatsApp पर खर्च जोड़ें' : 'Open WhatsApp chat'}</span>
+              </a>
+            )}
           </div>
         </div>
       </div>

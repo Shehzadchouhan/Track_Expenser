@@ -17,7 +17,12 @@ export async function GET(request: NextRequest) {
   const token = searchParams.get('hub.verify_token');
   const challenge = searchParams.get('hub.challenge');
 
-  const configuredVerifyToken = (process.env.WHATSAPP_VERIFY_TOKEN || 'track_expenser_verify_token_2026').trim();
+  const configuredVerifyToken = process.env.WHATSAPP_VERIFY_TOKEN?.trim();
+
+  if (!configuredVerifyToken) {
+    console.error('[WhatsApp Webhook] WHATSAPP_VERIFY_TOKEN is not configured.');
+    return new Response('Webhook verification is not configured', { status: 500 });
+  }
 
   // Verification challenge from Meta Developer Portal
   if (mode === 'subscribe' && token === configuredVerifyToken && challenge) {
@@ -45,6 +50,7 @@ function cleanOldMessageIds() {
 }
 
 export async function POST(request: NextRequest) {
+  let currentMessageId: string | undefined;
   try {
     const rawBody = await request.text();
     const signatureHeader = request.headers.get('x-hub-signature-256');
@@ -69,6 +75,7 @@ export async function POST(request: NextRequest) {
       // Ignored: Delivery status receipt (sent/delivered/read) or system event
       return NextResponse.json({ status: 'ignored' }, { status: 200 });
     }
+    currentMessageId = incomingMsg.messageId;
 
     // 3. Fast In-Memory Deduplication (Stops Meta retries from triggering duplicate bot replies)
     cleanOldMessageIds();
@@ -84,11 +91,17 @@ export async function POST(request: NextRequest) {
     // 4. Database Idempotency Check
     try {
       const supabase = createAdminClient();
-      const { data: existing } = await supabase
+      const { data: existing, error: lookupError } = await supabase
         .from('transactions')
         .select('id')
         .eq('whatsapp_message_id', incomingMsg.messageId)
         .maybeSingle();
+
+      if (lookupError) {
+        inFlightOrProcessedMessages.delete(incomingMsg.messageId);
+        console.error('[WhatsApp Webhook] Failed to check message idempotency:', lookupError);
+        return NextResponse.json({ error: 'Could not process the message right now.' }, { status: 500 });
+      }
 
       if (existing) {
         console.log(`[WhatsApp Webhook] Duplicate transaction ${incomingMsg.messageId} ignored.`);
@@ -98,7 +111,9 @@ export async function POST(request: NextRequest) {
         );
       }
     } catch (dbError) {
-      console.warn('[WhatsApp Webhook] Database check skipped or failed:', dbError);
+      inFlightOrProcessedMessages.delete(incomingMsg.messageId);
+      console.error('[WhatsApp Webhook] Failed to check message idempotency:', dbError);
+      return NextResponse.json({ error: 'Could not process the message right now.' }, { status: 500 });
     }
 
     console.log(`[WhatsApp Webhook] Valid message received from ${incomingMsg.fromPhone} (type: ${incomingMsg.type})`);
@@ -114,6 +129,9 @@ export async function POST(request: NextRequest) {
       { status: 200 }
     );
   } catch (error) {
+    if (currentMessageId) {
+      inFlightOrProcessedMessages.delete(currentMessageId);
+    }
     console.error('[WhatsApp Webhook] Unhandled error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }

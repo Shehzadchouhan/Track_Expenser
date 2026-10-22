@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CATEGORY_KINDS, TRANSACTION_TYPES, MIN_PAISE, MAX_PAISE } from '../constants';
+import { TRANSACTION_TYPES, MIN_PAISE, MAX_PAISE } from '../constants';
 
 function safeIsoDate(val: unknown, fallback?: string): string {
   if (!val) return fallback || new Date().toISOString();

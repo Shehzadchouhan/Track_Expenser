@@ -18,6 +18,12 @@ export async function updateSession(request: NextRequest) {
   }
 
   const supabase = createServerClient<Database>(supabaseUrl, supabaseKey, {
+    cookieOptions: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+    },
     cookies: {
       getAll() {
         return request.cookies.getAll();
