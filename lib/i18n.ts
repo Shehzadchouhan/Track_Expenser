@@ -58,7 +58,7 @@ export function accountLabel(name: string, language: AppLanguage): string {
     Cash: 'नकद (हाथ में)',
     'Cash (In Hand)': 'नकद (हाथ में)',
     'Online Vault': 'ऑनलाइन वॉल्ट (बैंक बचत)',
-    'Cash Vault': 'कैश वॉल्ट (नकद गुल्लक)',
+    'Cash Vault': 'कैश वॉल्ट (नकद बचत)',
     'Savings Vault': 'बचत वॉल्ट (सुरक्षित)',
   };
 

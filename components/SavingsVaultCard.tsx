@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import {
   ShieldCheck,
-  PiggyBank,
+  WalletCards,
   Target,
   ArrowRightLeft,
   Edit3,
@@ -298,7 +298,7 @@ export function SavingsVaultCard({
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-zinc-950 shadow-md">
-            <PiggyBank className="h-6 w-6 stroke-[2.2]" />
+            <ShieldCheck className="h-6 w-6 stroke-[2.2]" />
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -664,7 +664,7 @@ export function SavingsVaultCard({
           <div className="w-full max-w-md rounded-3xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
               <div className="flex items-center gap-2">
-                <PiggyBank className="h-5 w-5 text-emerald-400" />
+                <WalletCards className="h-5 w-5 text-emerald-400" />
                 <h4 className="text-base font-bold text-zinc-100">
                   {transferMode === 'deposit'
                     ? isHindi

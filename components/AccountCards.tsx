@@ -4,7 +4,6 @@ import React, { useState } from 'react';
 import {
   Landmark,
   Banknote,
-  PiggyBank,
   ShieldCheck,
   ArrowRightLeft,
   CheckCircle2,
@@ -112,7 +111,7 @@ export function AccountCards({
       ? isHindi ? 'नकद (हाथ में)' : 'Cash (In Hand)'
       : isOnlineVault
       ? isHindi ? 'ऑनलाइन वॉल्ट (बैंक बचत)' : 'Online Vault (Bank Savings)'
-      : isHindi ? 'कैश वॉल्ट (नकद गुल्लक)' : 'Cash Vault (Piggy Bank)';
+      : isHindi ? 'कैश वॉल्ट (नकद बचत)' : 'Cash Vault (Cash Savings)';
 
     const subtitleText = isOnlineSpending
       ? isHindi ? 'GPay, PhonePe, कार्ड' : 'Daily UPI & Card spending'
@@ -120,7 +119,7 @@ export function AccountCards({
       ? isHindi ? 'बटुआ व जेब का नकद' : 'Physical cash in pocket'
       : isOnlineVault
       ? isHindi ? 'बैंक में सुरक्षित डिजिटल बचत' : 'Digital reserve locked from daily budget'
-      : isHindi ? 'घर / गुल्लक में रखी नकद बचत' : 'Physical cash reserve & piggy bank';
+      : isHindi ? 'घर में रखी नकद बचत' : 'Physical cash reserve';
 
     const tagText = isOnlineSpending
       ? isHindi ? 'UPI / बैंक' : 'UPI/Online'
@@ -146,7 +145,7 @@ export function AccountCards({
                 ) : isOnlineVault ? (
                   <ShieldCheck className="h-5 w-5" />
                 ) : (
-                  <PiggyBank className="h-5 w-5" />
+                  <Wallet className="h-5 w-5" />
                 )}
               </div>
               <div>
@@ -249,7 +248,7 @@ export function AccountCards({
               </span>
             </h3>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              {isHindi ? 'ऑनलाइन बैंक बचत और नकद गुल्लक - दोनों अलग-अलग सुरक्षित' : 'Online Bank Vault & Cash Piggy Bank kept strictly separate'}
+              {isHindi ? 'ऑनलाइन बैंक बचत और नकद बचत - दोनों अलग-अलग सुरक्षित' : 'Online bank savings and cash savings kept strictly separate'}
             </p>
           </div>
         </div>

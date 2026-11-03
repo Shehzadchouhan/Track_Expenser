@@ -27,8 +27,8 @@ import {
   ArrowDownRight,
   Sparkles,
   Camera,
-  PiggyBank,
-  Share2,
+  Coins,
+  WalletCards,
 } from 'lucide-react';
 
 function isDisplayTransaction(value: unknown): value is DisplayTransaction {
@@ -1145,7 +1145,7 @@ export default function Home() {
               <div>
                 <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400">
                   <span>{isHindi ? 'कुल बचत (2 वॉल्ट्स)' : 'Total Savings (2 Vaults)'}</span>
-                  <PiggyBank className="h-4 w-4" />
+                  <Coins className="h-4 w-4" />
                 </div>
                 <p className="mt-2 text-2xl font-black text-indigo-600 dark:text-indigo-400">
                   {formatINR(totalSavingsBalancePaise, { showPaise: false })}
@@ -1156,7 +1156,8 @@ export default function Home() {
                   🏦 {isHindi ? 'ऑनलाइन:' : 'Online:'} {formatINR(onlineSavingsPaise, { showPaise: false })}
                 </span>
                 <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                  🪙 {isHindi ? 'कैश गुल्लक:' : 'Cash:'} {formatINR(cashSavingsPaise, { showPaise: false })}
+                  <WalletCards className="h-3 w-3" />
+                  {isHindi ? 'नकद बचत:' : 'Cash savings:'} {formatINR(cashSavingsPaise, { showPaise: false })}
                 </span>
               </div>
             </div>
