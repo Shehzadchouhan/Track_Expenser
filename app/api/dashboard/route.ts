@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getAuthenticatedUser } from '@/lib/supabase/auth';
-import { MAX_PAISE, MIN_PAISE } from '@/lib/constants';
+import { MAX_PAISE, MIN_PAISE, DEFAULT_CATEGORIES } from '@/lib/constants';
 
 const DashboardMutationSchema = z.discriminatedUnion('action', [
   z.object({
@@ -14,13 +14,37 @@ const DashboardMutationSchema = z.discriminatedUnion('action', [
     startingBalancePaise: z.number().int().min(0).max(MAX_PAISE),
   }),
   z.object({
+    action: z.literal('update_savings_upi'),
+    savings_upi_id: z.string().trim().max(100),
+  }),
+  z.object({
+    action: z.literal('update_account_goal'),
+    account_id: z.string().min(1),
+    target_goal_paise: z.number().int().min(0).max(MAX_PAISE).nullable(),
+  }),
+  z.object({
     action: z.literal('add_transaction'),
-    type: z.enum(['income', 'expense']),
+    type: z.enum(['income', 'expense', 'transfer']),
     amount_paise: z.number().int().min(MIN_PAISE).max(MAX_PAISE),
-    category_name: z.string().trim().min(1).max(40),
+    account_id: z.string().min(1).nullable().optional(),
+    transfer_to_account_id: z.string().min(1).nullable().optional(),
+    category_name: z.string().trim().min(1).max(40).optional(),
     merchant: z.string().trim().max(100).nullable().optional(),
     note: z.string().trim().max(280).nullable().optional(),
     occurred_at: z.string().datetime().optional(),
+  }),
+  z.object({
+    action: z.literal('reconcile_account'),
+    account_id: z.string().min(1),
+    actual_balance_paise: z.number().int().min(0).max(MAX_PAISE),
+  }),
+  z.object({
+    action: z.literal('create_account'),
+    name: z.string().trim().min(1).max(50),
+    type: z.enum(['bank', 'cash', 'wallet']).default('bank'),
+    purpose: z.enum(['spending', 'savings']).default('spending'),
+    opening_balance_paise: z.number().int().min(-MAX_PAISE).max(MAX_PAISE).default(0),
+    target_goal_paise: z.number().int().min(0).max(MAX_PAISE).nullable().optional(),
   }),
 ]);
 
@@ -30,69 +54,306 @@ function unauthorizedResponse() {
   return NextResponse.json({ error: 'Sign in to access your account.' }, { status: 401 });
 }
 
+async function safeInsertTransaction(admin: any, txPayload: Record<string, any>) {
+  try {
+    const res = await admin.from('transactions').insert(txPayload).select('id').single();
+    if (!res.error) return res;
+
+    // If column does not exist error (code 42703), strip account_id and transfer_to_account_id
+    if (res.error.code === '42703' || res.error.message?.includes('account_id') || res.error.message?.includes('transfer_to_account_id')) {
+      const cleanPayload = { ...txPayload };
+      delete cleanPayload.account_id;
+      delete cleanPayload.transfer_to_account_id;
+      return await admin.from('transactions').insert(cleanPayload).select('id').single();
+    }
+    return res;
+  } catch {
+    const cleanPayload = { ...txPayload };
+    delete cleanPayload.account_id;
+    delete cleanPayload.transfer_to_account_id;
+    return await admin.from('transactions').insert(cleanPayload).select('id').single();
+  }
+}
+
 export async function GET() {
   try {
     const user = await getAuthenticatedUser();
     if (!user) return unauthorizedResponse();
 
     const admin = createAdminClient();
-    const { data: userSettings, error: settingsError } = await admin
+
+    // Resilient user_settings query: try full columns, fallback to base columns if new columns don't exist
+    let userSettings: any = null;
+    const settingsRes = await admin
       .from('user_settings')
-      .select('user_id, phone_number, phone_verified, monthly_budget_paise, starting_balance_paise, currency, timezone')
+      .select('user_id, phone_number, phone_verified, monthly_budget_paise, starting_balance_paise, savings_upi_id, currency, timezone')
       .eq('user_id', user.id)
       .maybeSingle();
 
-    if (settingsError) {
-      console.error('[Dashboard API] Failed to fetch user settings:', settingsError);
-      return NextResponse.json({ error: 'Failed to fetch dashboard data.' }, { status: 500 });
+    if (settingsRes.error) {
+      const baseSettingsRes = await admin
+        .from('user_settings')
+        .select('user_id, phone_number, phone_verified, monthly_budget_paise, currency, timezone')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (baseSettingsRes.error) {
+        console.error('[Dashboard API] Failed to fetch base user settings:', baseSettingsRes.error);
+        return NextResponse.json({ error: 'Failed to fetch dashboard data.' }, { status: 500 });
+      }
+      userSettings = baseSettingsRes.data;
+    } else {
+      userSettings = settingsRes.data;
     }
 
-    if (!userSettings?.phone_verified) {
-      return NextResponse.json({ linked: false, transactions: [] });
+    let activeSettings = userSettings;
+    if (!activeSettings) {
+      try {
+        const { data: createdSettings } = await admin
+          .from('user_settings')
+          .upsert({ user_id: user.id }, { onConflict: 'user_id' })
+          .select('user_id, phone_number, phone_verified, monthly_budget_paise, currency, timezone')
+          .single();
+        activeSettings = createdSettings;
+      } catch {
+        activeSettings = {
+          user_id: user.id,
+          phone_number: null,
+          phone_verified: false,
+          monthly_budget_paise: 2500000,
+          currency: 'INR',
+          timezone: 'Asia/Kolkata',
+        };
+      }
     }
 
-    const [{ data: categories, error: categoriesError }, { data: txList, error: txError }] =
+    let [{ data: accounts, error: accountsError }, { data: categories, error: categoriesError }] =
       await Promise.all([
+        admin
+          .from('accounts')
+          .select('id, name, type, purpose, opening_balance_paise, target_goal_paise, is_default')
+          .eq('user_id', user.id)
+          .order('is_default', { ascending: false }),
         admin
           .from('categories')
           .select('id, name, color, kind')
           .eq('user_id', user.id),
-        admin
-          .from('transactions')
-          .select('id, type, amount_paise, merchant, note, category_id, source, occurred_at')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(50),
       ]);
 
-    if (categoriesError || txError) {
-      console.error('[Dashboard API] Failed to fetch account data:', categoriesError ?? txError);
-      return NextResponse.json({ error: 'Failed to fetch dashboard data.' }, { status: 500 });
+    const defaultFallbackAccounts = [
+      {
+        id: 'default-bank',
+        user_id: user.id,
+        name: 'Bank / UPI',
+        type: 'bank' as const,
+        purpose: 'spending' as const,
+        opening_balance_paise: activeSettings?.starting_balance_paise ?? 0,
+        target_goal_paise: null,
+        is_default: true,
+      },
+      {
+        id: 'default-cash',
+        user_id: user.id,
+        name: 'Cash',
+        type: 'cash' as const,
+        purpose: 'spending' as const,
+        opening_balance_paise: 0,
+        target_goal_paise: null,
+        is_default: false,
+      },
+      {
+        id: 'default-savings',
+        user_id: user.id,
+        name: 'Savings Vault',
+        type: 'bank' as const,
+        purpose: 'savings' as const,
+        opening_balance_paise: 0,
+        target_goal_paise: 5000000,
+        is_default: false,
+      },
+    ];
+
+    if (accountsError) {
+      accounts = defaultFallbackAccounts;
+    } else if (!accounts || accounts.length === 0) {
+      try {
+        const { data: seededAccounts } = await admin
+          .from('accounts')
+          .insert(defaultFallbackAccounts.map(({ id: _, ...rest }) => rest))
+          .select('id, name, type, purpose, opening_balance_paise, target_goal_paise, is_default');
+        if (seededAccounts && seededAccounts.length > 0) {
+          accounts = seededAccounts;
+        } else {
+          accounts = defaultFallbackAccounts;
+        }
+      } catch {
+        accounts = defaultFallbackAccounts;
+      }
     }
+
+    if (!categories || categories.length === 0) {
+      try {
+        const seedItems = DEFAULT_CATEGORIES.map((cat) => ({
+          user_id: user.id,
+          name: cat.name,
+          color: cat.color,
+          kind: cat.kind,
+        }));
+        const { data: seeded } = await admin.from('categories').insert(seedItems).select('id, name, color, kind');
+        if (seeded) {
+          categories = seeded;
+        }
+      } catch (err) {
+        console.warn('[Dashboard API] Categories seed warning:', err);
+      }
+    }
+
+    if (categoriesError && !categories) {
+      categories = DEFAULT_CATEGORIES.map((c, i) => ({ id: `cat-${i}`, name: c.name, color: c.color, kind: c.kind }));
+    }
+
+    // Resilient transactions query
+    let txList: any[] = [];
+    const txRes = await admin
+      .from('transactions')
+      .select('id, type, amount_paise, merchant, note, category_id, account_id, transfer_to_account_id, source, occurred_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (txRes.error) {
+      const fallbackTxRes = await admin
+        .from('transactions')
+        .select('id, type, amount_paise, merchant, note, category_id, source, occurred_at')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (fallbackTxRes.error) {
+        console.error('[Dashboard API] Failed to fetch transactions:', fallbackTxRes.error);
+        return NextResponse.json({ error: 'Failed to fetch dashboard data.' }, { status: 500 });
+      }
+      txList = (fallbackTxRes.data ?? []).map((t: any) => ({
+        ...t,
+        account_id: null,
+        transfer_to_account_id: null,
+      }));
+    } else {
+      txList = txRes.data ?? [];
+    }
+
+    // Compute live balance for each account using all user transactions
+    const accountMap = new Map((accounts ?? []).map((acc) => [acc.id, acc]));
+    const accountBalances = new Map<string, number>();
+    (accounts ?? []).forEach((acc) => {
+      accountBalances.set(acc.id, Number(acc.opening_balance_paise));
+    });
+
+    let allUserTx: any[] = [];
+    const allTxRes = await admin
+      .from('transactions')
+      .select('type, amount_paise, account_id, transfer_to_account_id, merchant')
+      .eq('user_id', user.id);
+
+    if (allTxRes.error) {
+      const fallbackAllTx = await admin
+        .from('transactions')
+        .select('type, amount_paise, merchant')
+        .eq('user_id', user.id);
+      allUserTx = fallbackAllTx.data ?? [];
+    } else {
+      allUserTx = allTxRes.data ?? [];
+    }
+
+    allUserTx.forEach((tx) => {
+      const amt = Number(tx.amount_paise);
+      let targetAccId = tx.account_id;
+      if (!targetAccId) {
+        if (tx.merchant?.toLowerCase().includes('cash')) {
+          targetAccId = 'default-cash';
+        } else if (tx.merchant?.toLowerCase().includes('savings')) {
+          targetAccId = 'default-savings';
+        } else {
+          targetAccId = 'default-bank';
+        }
+      }
+
+      if (tx.type === 'income' && targetAccId) {
+        const cur = accountBalances.get(targetAccId) ?? 0;
+        accountBalances.set(targetAccId, cur + amt);
+      } else if (tx.type === 'expense' && targetAccId) {
+        const cur = accountBalances.get(targetAccId) ?? 0;
+        accountBalances.set(targetAccId, cur - amt);
+      } else if (tx.type === 'transfer') {
+        if (targetAccId) {
+          const curFrom = accountBalances.get(targetAccId) ?? 0;
+          accountBalances.set(targetAccId, curFrom - amt);
+        }
+        if (tx.transfer_to_account_id) {
+          const curTo = accountBalances.get(tx.transfer_to_account_id) ?? 0;
+          accountBalances.set(tx.transfer_to_account_id, curTo + amt);
+        }
+      }
+    });
+
+    const accountsWithBalances = (accounts ?? []).map((acc) => ({
+      id: acc.id,
+      name: acc.name,
+      type: acc.type,
+      purpose: acc.purpose,
+      is_default: acc.is_default,
+      opening_balance_paise: Number(acc.opening_balance_paise),
+      target_goal_paise: acc.target_goal_paise != null ? Number(acc.target_goal_paise) : null,
+      current_balance_paise: accountBalances.get(acc.id) ?? Number(acc.opening_balance_paise),
+    }));
 
     const categoryMap = new Map((categories ?? []).map((category) => [category.id, category]));
     const transactions = (txList ?? []).map((transaction) => {
       const category = transaction.category_id ? categoryMap.get(transaction.category_id) : null;
+      let account = transaction.account_id ? accountMap.get(transaction.account_id) : null;
+      if (!account) {
+        if (transaction.merchant?.toLowerCase().includes('cash')) {
+          account = accountMap.get('default-cash');
+        } else if (transaction.merchant?.toLowerCase().includes('savings')) {
+          account = accountMap.get('default-savings');
+        } else {
+          account = accountMap.get('default-bank');
+        }
+      }
+      const transferTo = transaction.transfer_to_account_id
+        ? accountMap.get(transaction.transfer_to_account_id)
+        : null;
+
       return {
         id: transaction.id,
         type: transaction.type,
         amount_paise: Number(transaction.amount_paise),
+        account_id: transaction.account_id,
+        account_name: account?.name ?? 'Bank / UPI',
+        transfer_to_account_id: transaction.transfer_to_account_id,
+        transfer_to_account_name: transferTo?.name ?? null,
         merchant: transaction.merchant,
         note: transaction.note,
-        category_name: category?.name ?? 'General',
-        category_color: category?.color ?? '#64748B',
+        category_name: category?.name ?? (transaction.type === 'transfer' ? 'Transfer' : 'General'),
+        category_color: category?.color ?? (transaction.type === 'transfer' ? '#3B82F6' : '#64748B'),
         source: transaction.source,
         occurred_at: transaction.occurred_at,
       };
     });
 
+    const isLinked = Boolean(activeSettings?.phone_verified);
+
     return NextResponse.json({
-      linked: true,
-      phone: userSettings.phone_number,
-      monthlyBudgetPaise: userSettings.monthly_budget_paise ?? 2500000,
-      startingBalancePaise: userSettings.starting_balance_paise,
-      currency: userSettings.currency,
-      timezone: userSettings.timezone,
+      authenticated: true,
+      linked: isLinked,
+      phone: activeSettings?.phone_number ?? null,
+      email: user.email ?? null,
+      monthlyBudgetPaise: activeSettings?.monthly_budget_paise ?? 2500000,
+      startingBalancePaise: activeSettings?.starting_balance_paise ?? 0,
+      savingsUpiId: activeSettings?.savings_upi_id ?? null,
+      currency: activeSettings?.currency ?? 'INR',
+      timezone: activeSettings?.timezone ?? 'Asia/Kolkata',
+      accounts: accountsWithBalances,
       transactions,
     });
   } catch (error) {
@@ -134,16 +395,20 @@ export async function POST(request: NextRequest) {
     }
 
     if (mutation.action === 'update_starting_balance') {
-      const { error } = await admin
-        .from('user_settings')
-        .upsert(
-          { user_id: user.id, starting_balance_paise: mutation.startingBalancePaise },
-          { onConflict: 'user_id' }
-        );
+      try {
+        const { error } = await admin
+          .from('user_settings')
+          .upsert(
+            { user_id: user.id, starting_balance_paise: mutation.startingBalancePaise },
+            { onConflict: 'user_id' }
+          );
 
-      if (error) {
-        console.error('[Dashboard API] Failed to update starting balance:', error);
-        return NextResponse.json({ error: 'Could not save the starting balance.' }, { status: 500 });
+        if (error && error.code !== '42703' && !error.message?.includes('starting_balance_paise')) {
+          console.error('[Dashboard API] Failed to update starting balance:', error);
+          return NextResponse.json({ error: 'Could not save the starting balance.' }, { status: 500 });
+        }
+      } catch (err) {
+        console.warn('[Dashboard API] Error updating starting balance in DB:', err);
       }
 
       return NextResponse.json({
@@ -152,33 +417,233 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const { data: categories, error: categoriesError } = await admin
-      .from('categories')
-      .select('id, name')
-      .eq('user_id', user.id);
+    const isUuid = (id?: string | null): boolean =>
+      typeof id === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
 
-    if (categoriesError) {
-      console.error('[Dashboard API] Failed to fetch categories:', categoriesError);
-      return NextResponse.json({ error: 'Could not save the transaction.' }, { status: 500 });
+    if (mutation.action === 'reconcile_account') {
+      const isFallback = !isUuid(mutation.account_id);
+      let targetAccount: { id: string; name: string; opening_balance_paise: number } | null = null;
+
+      if (!isFallback) {
+        try {
+          const { data: dbAccount } = await admin
+            .from('accounts')
+            .select('id, name, opening_balance_paise')
+            .eq('id', mutation.account_id)
+            .eq('user_id', user.id)
+            .single();
+
+          if (dbAccount) {
+            targetAccount = {
+              id: dbAccount.id,
+              name: dbAccount.name,
+              opening_balance_paise: Number(dbAccount.opening_balance_paise),
+            };
+          }
+        } catch {
+          targetAccount = null;
+        }
+      }
+
+      let currentBalance = 0;
+      if (targetAccount) {
+        currentBalance = Number(targetAccount.opening_balance_paise);
+      }
+
+      let allTx: any[] = [];
+      const txRes = await admin
+        .from('transactions')
+        .select('type, amount_paise, account_id, transfer_to_account_id, merchant')
+        .eq('user_id', user.id);
+
+      if (txRes.error) {
+        const fbRes = await admin
+          .from('transactions')
+          .select('type, amount_paise, merchant')
+          .eq('user_id', user.id);
+        allTx = fbRes.data ?? [];
+      } else {
+        allTx = txRes.data ?? [];
+      }
+
+      allTx.forEach((tx) => {
+        const amt = Number(tx.amount_paise);
+        let accMatch = false;
+        if (tx.account_id && targetAccount?.id) {
+          accMatch = tx.account_id === targetAccount.id;
+        } else if (mutation.account_id.includes('cash')) {
+          accMatch = Boolean(tx.merchant?.toLowerCase().includes('cash'));
+        } else if (mutation.account_id.includes('savings')) {
+          accMatch = Boolean(tx.merchant?.toLowerCase().includes('savings'));
+        } else {
+          accMatch = !tx.merchant?.toLowerCase().includes('cash') && !tx.merchant?.toLowerCase().includes('savings');
+        }
+
+        if (accMatch) {
+          if (tx.type === 'income') currentBalance += amt;
+          if (tx.type === 'expense') currentBalance -= amt;
+        }
+      });
+
+      const difference = mutation.actual_balance_paise - currentBalance;
+      if (difference === 0) {
+        return NextResponse.json({ success: true, message: 'Balance is already reconciled.', adjustedPaise: 0 });
+      }
+
+      const isPositive = difference > 0;
+      const accountDisplayName = targetAccount?.name ?? (
+        mutation.account_id.includes('cash')
+          ? 'Cash'
+          : mutation.account_id.includes('savings')
+          ? 'Savings Vault'
+          : 'Bank / UPI'
+      );
+
+      const txPayload: any = {
+        user_id: user.id,
+        type: isPositive ? 'income' : 'expense',
+        amount_paise: Math.abs(difference),
+        merchant: `${accountDisplayName} Reconciliation`,
+        note: `Balance adjustment to ₹${(mutation.actual_balance_paise / 100).toFixed(2)}`,
+        source: 'web',
+        occurred_at: new Date().toISOString(),
+      };
+      if (targetAccount?.id) {
+        txPayload.account_id = targetAccount.id;
+      }
+
+      const { data: adjTx, error: adjError } = await safeInsertTransaction(admin, txPayload);
+
+      if (adjError) {
+        console.error('[Dashboard API] Failed to log reconciliation adjustment:', adjError);
+        return NextResponse.json({ error: 'Could not record reconciliation.' }, { status: 500 });
+      }
+
+      return NextResponse.json({
+        success: true,
+        adjustedPaise: difference,
+        newBalancePaise: mutation.actual_balance_paise,
+        transactionId: adjTx?.id ?? null,
+      });
     }
 
-    const matchedCategory = categories?.find(
-      (category) => category.name.toLowerCase() === mutation.category_name.toLowerCase()
-    );
-    const { data: newTransaction, error: transactionError } = await admin
-      .from('transactions')
-      .insert({
-        user_id: user.id,
-        type: mutation.type,
-        amount_paise: mutation.amount_paise,
-        category_id: matchedCategory?.id ?? null,
-        merchant: mutation.merchant || null,
-        note: mutation.note || null,
-        source: 'web',
-        occurred_at: mutation.occurred_at ?? new Date().toISOString(),
-      })
-      .select('id')
-      .single();
+    if (mutation.action === 'update_savings_upi') {
+      const cleanUpi = mutation.savings_upi_id.trim() || null;
+      try {
+        await admin
+          .from('user_settings')
+          .upsert(
+            { user_id: user.id, savings_upi_id: cleanUpi },
+            { onConflict: 'user_id' }
+          );
+      } catch (err) {
+        console.warn('[Dashboard API] savings_upi_id not in DB schema yet:', err);
+      }
+
+      return NextResponse.json({
+        success: true,
+        savingsUpiId: cleanUpi,
+      });
+    }
+
+    if (mutation.action === 'update_account_goal') {
+      if (!isUuid(mutation.account_id)) {
+        return NextResponse.json({
+          success: true,
+          account: { id: mutation.account_id, target_goal_paise: mutation.target_goal_paise },
+        });
+      }
+
+      const { data: updatedAcc, error } = await admin
+        .from('accounts')
+        .update({ target_goal_paise: mutation.target_goal_paise })
+        .eq('id', mutation.account_id)
+        .eq('user_id', user.id)
+        .select('id, name, target_goal_paise')
+        .single();
+
+      if (error) {
+        console.error('[Dashboard API] Failed to update account goal:', error);
+        return NextResponse.json({ error: 'Could not update savings goal.' }, { status: 500 });
+      }
+
+      return NextResponse.json({
+        success: true,
+        account: updatedAcc,
+      });
+    }
+
+    if (mutation.action === 'create_account') {
+      const { data: newAccount, error: accError } = await admin
+        .from('accounts')
+        .insert({
+          user_id: user.id,
+          name: mutation.name,
+          type: mutation.type,
+          purpose: mutation.purpose,
+          opening_balance_paise: mutation.opening_balance_paise,
+          target_goal_paise: mutation.target_goal_paise ?? null,
+          is_default: false,
+        })
+        .select('id, name, type, purpose, opening_balance_paise, target_goal_paise, is_default')
+        .single();
+
+      if (accError) {
+        console.error('[Dashboard API] Failed to create account:', accError);
+        return NextResponse.json({ error: 'Could not create account.' }, { status: 500 });
+      }
+
+      return NextResponse.json({ success: true, account: newAccount });
+    }
+
+    // Default: add_transaction
+    let targetAccountId = isUuid(mutation.account_id) ? mutation.account_id : null;
+    let transferToAccountId = (mutation.type === 'transfer' && isUuid(mutation.transfer_to_account_id))
+      ? mutation.transfer_to_account_id
+      : null;
+
+    if (!targetAccountId && mutation.account_id && !mutation.account_id.startsWith('default-')) {
+      try {
+        const { data: defaultAcc } = await admin
+          .from('accounts')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('is_default', true)
+          .maybeSingle();
+        targetAccountId = defaultAcc?.id ?? null;
+      } catch {
+        targetAccountId = null;
+      }
+    }
+
+    let categoryId: string | null = null;
+    if (mutation.type !== 'transfer' && mutation.category_name) {
+      const { data: categories } = await admin
+        .from('categories')
+        .select('id, name')
+        .eq('user_id', user.id);
+
+      const matchedCategory = categories?.find(
+        (category) => category.name.toLowerCase() === mutation.category_name!.toLowerCase()
+      );
+      categoryId = matchedCategory?.id ?? null;
+    }
+
+    const txPayload: any = {
+      user_id: user.id,
+      type: mutation.type,
+      amount_paise: mutation.amount_paise,
+      account_id: targetAccountId,
+      transfer_to_account_id: transferToAccountId,
+      category_id: categoryId,
+      merchant: mutation.merchant || null,
+      note: mutation.note || null,
+      source: 'web',
+      occurred_at: mutation.occurred_at ?? new Date().toISOString(),
+    };
+
+    const { data: newTransaction, error: transactionError } = await safeInsertTransaction(admin, txPayload);
 
     if (transactionError || !newTransaction) {
       console.error('[Dashboard API] Failed to create transaction:', transactionError);

@@ -2,18 +2,15 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { Navbar } from '@/components/Navbar';
-import { TotalBalanceCard } from '@/components/TotalBalanceCard';
-import { SpendingTrendChart } from '@/components/SpendingTrendChart';
-import { SafeToSpendCard } from '@/components/SafeToSpendCard';
-import { WhatsAppLinkCard } from '@/components/WhatsAppLinkCard';
+import { AccountCards, DashboardAccount } from '@/components/AccountCards';
 import { TransactionFeed, DisplayTransaction } from '@/components/TransactionFeed';
 import { CategoryBreakdown, CategorySpendItem } from '@/components/CategoryBreakdown';
 import { AddTransactionModal } from '@/components/AddTransactionModal';
 import { ResetModal, ResetScope } from '@/components/ResetModal';
 import { AuthModal } from '@/components/AuthModal';
-import { calculateDailyBudgetPulse, BudgetPulseResult } from '@/lib/budget';
 import { DEFAULT_CATEGORIES } from '@/lib/constants';
 import { formatINR } from '@/lib/money';
+import { createClient as createBrowserSupabaseClient } from '@/lib/supabase/client';
 import {
   getSavedLanguage,
   getServerLanguage,
@@ -25,6 +22,10 @@ import {
   Layers,
   RotateCcw,
   Zap,
+  ArrowRightLeft,
+  ArrowUpRight,
+  ArrowDownRight,
+  Sparkles,
 } from 'lucide-react';
 
 function isDisplayTransaction(value: unknown): value is DisplayTransaction {
@@ -32,7 +33,7 @@ function isDisplayTransaction(value: unknown): value is DisplayTransaction {
   const transaction = value as Record<string, unknown>;
   return (
     typeof transaction.id === 'string' &&
-    (transaction.type === 'income' || transaction.type === 'expense') &&
+    (transaction.type === 'income' || transaction.type === 'expense' || transaction.type === 'transfer') &&
     typeof transaction.amount_paise === 'number' &&
     Number.isFinite(transaction.amount_paise) &&
     typeof transaction.source === 'string' &&
@@ -43,11 +44,44 @@ function isDisplayTransaction(value: unknown): value is DisplayTransaction {
 
 export default function Home() {
   const [transactions, setTransactions] = useState<DisplayTransaction[]>([]);
-  const [startingBalanceRupees, setStartingBalanceRupees] = useState<number>(50000); // Default Starting Capital ₹50,000
+  const [startingBalanceRupees, setStartingBalanceRupees] = useState<number>(0);
   const [monthlyBudgetPaise, setMonthlyBudgetPaise] = useState<number>(2500000); // Default ₹25,000
-  const [isPhoneLinked, setIsPhoneLinked] = useState<boolean>(false);
-  const [linkedPhone, setLinkedPhone] = useState<string | null>(null);
-  const [isSimpleView, setIsSimpleView] = useState(true);
+  const [accounts, setAccounts] = useState<DashboardAccount[]>([
+    {
+      id: 'default-bank',
+      name: 'Bank / UPI',
+      type: 'bank',
+      purpose: 'spending',
+      is_default: true,
+      opening_balance_paise: 0,
+      target_goal_paise: null,
+      current_balance_paise: 0,
+    },
+    {
+      id: 'default-cash',
+      name: 'Cash',
+      type: 'cash',
+      purpose: 'spending',
+      is_default: false,
+      opening_balance_paise: 0,
+      target_goal_paise: null,
+      current_balance_paise: 0,
+    },
+    {
+      id: 'default-savings',
+      name: 'Savings Vault',
+      type: 'bank',
+      purpose: 'savings',
+      is_default: false,
+      opening_balance_paise: 0,
+      target_goal_paise: 5000000,
+      current_balance_paise: 0,
+    },
+  ]);
+  const [savingsUpiId, setSavingsUpiId] = useState<string | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+
   const language = useSyncExternalStore(
     subscribeToLanguage,
     getSavedLanguage,
@@ -60,7 +94,7 @@ export default function Home() {
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [newTransactionType, setNewTransactionType] = useState<'expense' | 'income'>('expense');
+  const [newTransactionType, setNewTransactionType] = useState<'expense' | 'income' | 'transfer'>('expense');
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
@@ -74,36 +108,71 @@ export default function Home() {
       const res = await fetch('/api/dashboard');
       if (!res.ok) {
         if (res.status === 401) {
-          setIsPhoneLinked(false);
-          setLinkedPhone(null);
-          setTransactions([]);
+          setIsAuthenticated(false);
+          setUserEmail(null);
         }
         return false;
       }
       const data = await res.json();
-      if (data.linked) {
-        setIsPhoneLinked(true);
-        setLinkedPhone(data.phone);
+      if (data.authenticated) {
+        setIsAuthenticated(true);
+        setUserEmail(data.email || null);
         if (data.monthlyBudgetPaise) {
           setMonthlyBudgetPaise(data.monthlyBudgetPaise);
         }
         if (typeof data.startingBalancePaise === 'number') {
           setStartingBalanceRupees(data.startingBalancePaise / 100);
         }
-        // Always set transactions when data.transactions is returned (even if empty [])
+        if (typeof data.savingsUpiId !== 'undefined') {
+          setSavingsUpiId(data.savingsUpiId);
+        }
+        if (Array.isArray(data.accounts) && data.accounts.length > 0) {
+          setAccounts(data.accounts);
+        }
         if (Array.isArray(data.transactions)) {
           setTransactions(data.transactions);
         }
         return true;
       }
-      setIsPhoneLinked(false);
-      setLinkedPhone(null);
+      setIsAuthenticated(false);
+      setUserEmail(null);
       return false;
-    } catch (err) {
-      console.warn('[Dashboard] Error refreshing live data:', err);
+    } catch {
       return false;
     }
   }, []);
+
+  // Set up client-side Supabase auth listener (handles Magic Links, OTPs, hash fragments #access_token=...)
+  useEffect(() => {
+    let client: ReturnType<typeof createBrowserSupabaseClient> | null = null;
+    try {
+      client = createBrowserSupabaseClient();
+    } catch {
+      // Ignore if Supabase env is not configured in client
+    }
+
+    if (!client) return;
+
+    const {
+      data: { subscription },
+    } = client.auth.onAuthStateChange(async (_event, session) => {
+      if (session) {
+        setIsAuthenticated(true);
+        setUserEmail(session.user?.email || null);
+        await loadDashboardData();
+        if (typeof window !== 'undefined' && window.location.hash.includes('access_token')) {
+          window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        }
+      } else if (_event === 'SIGNED_OUT') {
+        setIsAuthenticated(false);
+        setUserEmail(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [loadDashboardData]);
 
   // Restore the authenticated account first, then load browser-only guest data.
   useEffect(() => {
@@ -115,10 +184,22 @@ export default function Home() {
       localStorage.removeItem('track_expenser_phone');
       const savedStartingBalance = localStorage.getItem('track_expenser_starting_balance');
       const savedCycle = localStorage.getItem('track_expenser_cycle');
-      const parsedBalance = savedStartingBalance ? Number.parseFloat(savedStartingBalance) : NaN;
-      if (Number.isFinite(parsedBalance) && parsedBalance >= 0) {
-        setStartingBalanceRupees(parsedBalance);
-      }
+      const parsedBalance = savedStartingBalance ? Number.parseFloat(savedStartingBalance) : 0;
+      const validStartingBalance = Number.isFinite(parsedBalance) && parsedBalance >= 0 ? parsedBalance : 0;
+      setStartingBalanceRupees(validStartingBalance);
+
+      setAccounts((prev) =>
+        prev.map((acc) =>
+          acc.id === 'default-bank' || (acc.type === 'bank' && acc.is_default)
+            ? {
+                ...acc,
+                opening_balance_paise: Math.round(validStartingBalance * 100),
+                current_balance_paise: Math.round(validStartingBalance * 100),
+              }
+            : acc
+        )
+      );
+
       if (savedCycle && ['weekly', 'monthly', 'all'].includes(savedCycle)) {
         setTimeRange(savedCycle as 'weekly' | 'monthly' | 'all');
       }
@@ -136,7 +217,6 @@ export default function Home() {
           console.warn('[Dashboard] Could not restore saved local transactions:', err);
         }
       }
-
     };
     void restore();
     return () => {
@@ -146,12 +226,12 @@ export default function Home() {
 
   // Periodic polling for new WhatsApp expenses (5s live pulse)
   useEffect(() => {
-    if (!linkedPhone) return;
+    if (!isAuthenticated) return;
     const interval = setInterval(() => {
       loadDashboardData();
     }, 5000);
     return () => clearInterval(interval);
-  }, [isPhoneLinked, linkedPhone, loadDashboardData]);
+  }, [isAuthenticated, loadDashboardData]);
 
   // Cycle range start dates
   const { startOfWeek, startOfMonth, cycleRangeLabel } = useMemo(() => {
@@ -203,32 +283,32 @@ export default function Home() {
 
   const handleLanguageChange = saveLanguage;
 
-  // Compute spend stats
+  // Compute spend stats (transfers are excluded)
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
-  const spentTodayPaise = cycleTransactions
-    .filter((t) => t.type === 'expense' && new Date(t.occurred_at) >= todayStart)
+  const cycleIncomePaise = cycleTransactions
+    .filter((t) => t.type === 'income')
     .reduce((sum, t) => sum + t.amount_paise, 0);
 
   const cycleSpentPaise = cycleTransactions
     .filter((t) => t.type === 'expense')
     .reduce((sum, t) => sum + t.amount_paise, 0);
-  const monthSpentPaise = transactions
-    .filter((t) => t.type === 'expense' && new Date(t.occurred_at) >= startOfMonth)
-    .reduce((sum, t) => sum + t.amount_paise, 0);
+
   const todayTransactions = transactions.filter(
     (t) => t.type === 'expense' && new Date(t.occurred_at) >= todayStart
   );
   const todaySpendPaise = todayTransactions.reduce((sum, t) => sum + t.amount_paise, 0);
 
-  const pulse: BudgetPulseResult = calculateDailyBudgetPulse({
-    monthlyBudgetPaise,
-    monthSpentPaise: cycleSpentPaise,
-    spentTodayPaise,
-  });
+  const totalSpendingBalancePaise = accounts
+    .filter((a) => a.purpose === 'spending')
+    .reduce((sum, a) => sum + a.current_balance_paise, 0);
 
-  // Calculate Category Breakdown based on cycle transactions
+  const totalSavingsBalancePaise = accounts
+    .filter((a) => a.purpose === 'savings')
+    .reduce((sum, a) => sum + a.current_balance_paise, 0);
+
+  // Calculate Category Breakdown based on cycle expenses
   const categoryMap = new Map<string, CategorySpendItem>();
   DEFAULT_CATEGORIES.filter((c) => c.kind === 'expense').forEach((c) => {
     categoryMap.set(c.name, {
@@ -261,7 +341,7 @@ export default function Home() {
   const handleUpdateBudget = async (newBudgetRupees: number) => {
     const paise = Math.round(newBudgetRupees * 100);
 
-    if (linkedPhone) {
+    if (isAuthenticated) {
       try {
         const response = await fetch('/api/dashboard', {
           method: 'POST',
@@ -286,35 +366,168 @@ export default function Home() {
   };
 
   const handleUpdateStartingBalance = async (newBalance: number) => {
-    if (linkedPhone) {
+    const newBalancePaise = Math.round(newBalance * 100);
+    setStartingBalanceRupees(newBalance);
+    localStorage.setItem('track_expenser_starting_balance', newBalance.toString());
+
+    setAccounts((prev) =>
+      prev.map((acc) =>
+        acc.id === 'default-bank' || (acc.type === 'bank' && acc.is_default)
+          ? {
+              ...acc,
+              opening_balance_paise: newBalancePaise,
+              current_balance_paise: newBalancePaise,
+            }
+          : acc
+      )
+    );
+
+    if (isAuthenticated) {
       try {
         const response = await fetch('/api/dashboard', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             action: 'update_starting_balance',
-            startingBalancePaise: Math.round(newBalance * 100),
+            startingBalancePaise: newBalancePaise,
           }),
         });
-        if (!response.ok) {
-          const result = await response.json();
-          throw new Error(result.error || 'Could not save the starting balance.');
+        if (response.status === 401) {
+          setIsAuthenticated(false);
+          setUserEmail(null);
+          return;
         }
-        setStartingBalanceRupees(newBalance);
+        void loadDashboardData();
       } catch (error) {
         console.error('[Dashboard] Failed to save starting balance:', error);
-        window.alert('Could not save the starting balance. Please try again.');
       }
-      return;
     }
+  };
 
-    setStartingBalanceRupees(newBalance);
-    localStorage.setItem('track_expenser_starting_balance', newBalance.toString());
+  // Reconcile account balance
+  const handleReconcileAccount = async (accountId: string, actualRupees: number) => {
+    const actual_balance_paise = Math.round(actualRupees * 100);
+
+    if (isAuthenticated) {
+      const res = await fetch('/api/dashboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'reconcile_account',
+          account_id: accountId,
+          actual_balance_paise,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to reconcile balance.');
+      }
+      void loadDashboardData();
+    } else {
+      setAccounts((prev) =>
+        prev.map((acc) =>
+          acc.id === accountId ? { ...acc, current_balance_paise: actual_balance_paise } : acc
+        )
+      );
+    }
+  };
+
+  const handleUpdateSavingsUpi = async (upiId: string) => {
+    if (isAuthenticated) {
+      const res = await fetch('/api/dashboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_savings_upi',
+          savings_upi_id: upiId,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to update savings UPI ID');
+      }
+    }
+    setSavingsUpiId(upiId || null);
+  };
+
+  const handleUpdateAccountGoal = async (accountId: string, targetGoalRupees: number | null) => {
+    const target_goal_paise = targetGoalRupees !== null ? Math.round(targetGoalRupees * 100) : null;
+    if (isAuthenticated) {
+      const res = await fetch('/api/dashboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_account_goal',
+          account_id: accountId,
+          target_goal_paise,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to update savings goal');
+      }
+      void loadDashboardData();
+    } else {
+      setAccounts((prev) =>
+        prev.map((acc) => (acc.id === accountId ? { ...acc, target_goal_paise } : acc))
+      );
+    }
+  };
+
+  const handleCreateSavingsAccount = async (name: string, targetGoalRupees: number | null) => {
+    const target_goal_paise = targetGoalRupees !== null ? Math.round(targetGoalRupees * 100) : null;
+    if (isAuthenticated) {
+      const res = await fetch('/api/dashboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create_account',
+          name,
+          type: 'bank',
+          purpose: 'savings',
+          opening_balance_paise: 0,
+          target_goal_paise,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to create savings goal');
+      }
+      void loadDashboardData();
+    } else {
+      const newAcc: DashboardAccount = {
+        id: `local-savings-${Date.now()}`,
+        name,
+        type: 'bank',
+        purpose: 'savings',
+        is_default: false,
+        opening_balance_paise: 0,
+        target_goal_paise,
+        current_balance_paise: 0,
+      };
+      setAccounts((prev) => [...prev, newAcc]);
+    }
+  };
+
+  const handleTransferFunds = async (
+    fromAccountId: string,
+    toAccountId: string,
+    amountRupees: number,
+    note?: string
+  ) => {
+    await handleAddTransaction({
+      type: 'transfer',
+      amountRupees,
+      accountId: fromAccountId,
+      transferToAccountId: toAccountId,
+      note,
+    });
   };
 
   // Permanently delete transaction from Supabase and UI
   const handleDeleteTransaction = async (id: string) => {
-    if (linkedPhone) {
+    if (isAuthenticated) {
       const response = await fetch(
         `/api/dashboard?id=${encodeURIComponent(id)}`,
         { method: 'DELETE' }
@@ -323,6 +536,7 @@ export default function Home() {
       if (!response.ok) {
         throw new Error(responseData.error || 'Could not delete this record. Please try again.');
       }
+      void loadDashboardData();
     } else {
       const savedTransactions = transactions.filter((transaction) => transaction.id !== id);
       localStorage.setItem('track_expenser_transactions', JSON.stringify(savedTransactions));
@@ -332,14 +546,24 @@ export default function Home() {
 
   // Reset tracking cycle / history
   const handleConfirmReset = async (scope: ResetScope, resetStartingBalance: boolean) => {
-    if (linkedPhone) {
-      const res = await fetch(
-        `/api/dashboard?action=${encodeURIComponent(scope)}`,
-        { method: 'DELETE' }
-      );
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData?.error || 'Failed to reset on server');
+    let resetOnServer = isAuthenticated;
+
+    if (resetOnServer) {
+      try {
+        const res = await fetch(
+          `/api/dashboard?action=${encodeURIComponent(scope)}`,
+          { method: 'DELETE' }
+        );
+        if (res.status === 401) {
+          setIsAuthenticated(false);
+          setUserEmail(null);
+          resetOnServer = false;
+        } else if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData?.error || 'Failed to reset on server');
+        }
+      } catch (err) {
+        if (resetOnServer) throw err;
       }
     }
 
@@ -347,60 +571,103 @@ export default function Home() {
     if (scope === 'reset_weekly') {
       const remaining = transactions.filter((t) => new Date(t.occurred_at) < startOfWeek);
       setTransactions(remaining);
-      if (!linkedPhone) localStorage.setItem('track_expenser_transactions', JSON.stringify(remaining));
+      if (!resetOnServer) localStorage.setItem('track_expenser_transactions', JSON.stringify(remaining));
     } else if (scope === 'reset_monthly') {
       const remaining = transactions.filter((t) => new Date(t.occurred_at) < startOfMonth);
       setTransactions(remaining);
-      if (!linkedPhone) localStorage.setItem('track_expenser_transactions', JSON.stringify(remaining));
+      if (!resetOnServer) localStorage.setItem('track_expenser_transactions', JSON.stringify(remaining));
     } else if (scope === 'reset_all') {
       setTransactions([]);
-      if (!linkedPhone) localStorage.setItem('track_expenser_transactions', JSON.stringify([]));
+      if (!resetOnServer) localStorage.setItem('track_expenser_transactions', JSON.stringify([]));
     }
 
     if (resetStartingBalance) {
-      if (linkedPhone) {
-        const response = await fetch('/api/dashboard', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'update_starting_balance',
-            startingBalancePaise: 0,
-          }),
-        });
-        if (!response.ok) {
-          const result = await response.json();
-          throw new Error(result.error || 'Could not reset the starting balance.');
-        }
-      } else {
-        localStorage.setItem('track_expenser_starting_balance', '0');
-      }
       setStartingBalanceRupees(0);
+      localStorage.setItem('track_expenser_starting_balance', '0');
+      setAccounts((prev) =>
+        prev.map((acc) => ({
+          ...acc,
+          opening_balance_paise: 0,
+          current_balance_paise: 0,
+        }))
+      );
+
+      if (resetOnServer) {
+        try {
+          const response = await fetch('/api/dashboard', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'update_starting_balance',
+              startingBalancePaise: 0,
+            }),
+          });
+          if (response.status === 401) {
+            setIsAuthenticated(false);
+            setUserEmail(null);
+          }
+        } catch (err) {
+          console.warn('[Dashboard] Error resetting starting balance on server:', err);
+        }
+      }
+    } else {
+      const remainingTx =
+        scope === 'reset_weekly'
+          ? transactions.filter((t) => new Date(t.occurred_at) < startOfWeek)
+          : scope === 'reset_monthly'
+          ? transactions.filter((t) => new Date(t.occurred_at) < startOfMonth)
+          : [];
+
+      setAccounts((prev) =>
+        prev.map((acc) => {
+          let bal = acc.opening_balance_paise;
+          remainingTx.forEach((tx) => {
+            if (tx.type === 'income' && (tx.account_id === acc.id || (!tx.account_id && acc.is_default))) bal += tx.amount_paise;
+            if (tx.type === 'expense' && (tx.account_id === acc.id || (!tx.account_id && acc.is_default))) bal -= tx.amount_paise;
+          });
+          return { ...acc, current_balance_paise: bal };
+        })
+      );
+    }
+
+    if (resetOnServer) {
+      void loadDashboardData();
     }
   };
 
   const handleAddTransaction = async (data: {
-    type: 'expense' | 'income';
+    type: 'expense' | 'income' | 'transfer';
     amountRupees: number;
-    category: string;
+    accountId?: string | null;
+    transferToAccountId?: string | null;
+    category?: string;
     merchant?: string;
     note?: string;
     occurredAt?: string;
   }) => {
     const cat = DEFAULT_CATEGORIES.find((c) => c.name === data.category);
     const amount_paise = Math.round(data.amountRupees * 100);
+
+    const fromAcc = accounts.find((a) => a.id === data.accountId) || accounts[0];
+    const toAcc = data.transferToAccountId ? accounts.find((a) => a.id === data.transferToAccountId) : null;
+
     const newTx: DisplayTransaction = {
       id: `manual-${Date.now()}`,
       type: data.type,
       amount_paise,
+      account_id: data.accountId || fromAcc?.id,
+      account_name: fromAcc?.name ?? 'Bank / UPI',
+      transfer_to_account_id: data.transferToAccountId || null,
+      transfer_to_account_name: toAcc?.name || null,
       merchant: data.merchant || null,
       note: data.note || null,
-      category_name: data.category,
-      category_color: cat?.color || '#64748B',
+      category_name: data.type === 'transfer' ? 'Transfer' : data.category || 'General',
+      category_color: data.type === 'transfer' ? '#3B82F6' : cat?.color || '#64748B',
       source: 'web',
       occurred_at: data.occurredAt ?? new Date().toISOString(),
     };
 
-    if (linkedPhone) {
+    if (isAuthenticated) {
       const res = await fetch('/api/dashboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -408,6 +675,8 @@ export default function Home() {
           action: 'add_transaction',
           type: data.type,
           amount_paise,
+          account_id: data.accountId,
+          transfer_to_account_id: data.transferToAccountId,
           category_name: data.category,
           merchant: data.merchant,
           note: data.note,
@@ -419,6 +688,7 @@ export default function Home() {
         throw new Error(resData.error || 'Could not save your record. Please try again.');
       }
       newTx.id = resData.transaction.id;
+      void loadDashboardData();
     } else {
       const savedTransactions = localStorage.getItem('track_expenser_transactions');
       let parsedTransactions: unknown = [];
@@ -426,11 +696,11 @@ export default function Home() {
         try {
           parsedTransactions = JSON.parse(savedTransactions);
         } catch {
-          throw new Error('Could not read your saved records. Please keep this browser data and try again.');
+          throw new Error('Could not read your saved records.');
         }
       }
       if (!Array.isArray(parsedTransactions) || !parsedTransactions.every(isDisplayTransaction)) {
-        throw new Error('Could not read your saved records. Please keep this browser data and try again.');
+        throw new Error('Could not read your saved records.');
       }
       localStorage.setItem(
         'track_expenser_transactions',
@@ -441,17 +711,14 @@ export default function Home() {
     setTransactions((prev) => [newTx, ...prev]);
   };
 
-  const handlePhoneLinkedSuccess = (phone: string) => {
-    setIsPhoneLinked(true);
-    setLinkedPhone(phone);
-    setTransactions([]);
-    setStartingBalanceRupees(50000);
-    setMonthlyBudgetPaise(2500000);
+  const handleAuthSuccess = (email: string) => {
+    setIsAuthenticated(true);
+    setUserEmail(email);
     setIsAuthModalOpen(false);
     void loadDashboardData();
   };
 
-  // Sign out / switch account
+  // Sign out
   const handleSignOut = async () => {
     try {
       const response = await fetch('/api/auth/sign-out', { method: 'POST' });
@@ -461,8 +728,8 @@ export default function Home() {
 
       localStorage.removeItem('track_expenser_phone');
       localStorage.removeItem('track_expenser_starting_balance');
-      setIsPhoneLinked(false);
-      setLinkedPhone(null);
+      setIsAuthenticated(false);
+      setUserEmail(null);
       setTransactions([]);
       setStartingBalanceRupees(0);
     } catch (error) {
@@ -473,11 +740,11 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-zinc-50 font-sans text-zinc-900 antialiased dark:bg-black dark:text-zinc-50">
-      {/* Navbar with Brand Logo, WhatsApp Link, Sign In / Out & Reset */}
+      {/* Navbar with Brand Logo, Sign In / Out & Reset */}
       <Navbar
-        isPhoneLinked={isPhoneLinked}
-        phoneNumber={linkedPhone}
-        onOpenPhoneModal={() => setIsAuthModalOpen(true)}
+        isAuthenticated={isAuthenticated}
+        userEmail={userEmail}
+        onOpenAuthModal={() => setIsAuthModalOpen(true)}
         onSignOut={handleSignOut}
         onOpenResetModal={() => setIsResetModalOpen(true)}
         language={language}
@@ -485,186 +752,201 @@ export default function Home() {
       />
 
       {/* Main Container */}
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-6">
-        {isSimpleView && (
-          <section className="mx-auto max-w-3xl space-y-5">
-            <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-8">
-              <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-                {isHindi ? 'आपका पैसा, आसानी से' : 'Your money, made simple'}
-              </p>
-              <h1 className="mt-2 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-3xl">
-                {isHindi
-                  ? isPhoneLinked ? 'आपके पैसों का आसान हिसाब' : 'पैसों का हिसाब शुरू करें'
-                  : isPhoneLinked ? 'Your money at a glance' : 'Start keeping a money record'}
-              </h1>
-              <p className="mt-2 text-base leading-relaxed text-zinc-600 dark:text-zinc-300">
-                {isHindi
-                  ? 'खर्च या कमाई जोड़ें। WhatsApp पर रकम लिखें या भुगतान का स्क्रीनशॉट भेजें।'
-                  : 'Add money you spend or receive. You can also send a payment screenshot on WhatsApp.'}
-              </p>
-
-              <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl bg-emerald-50 p-5 dark:bg-emerald-950/30">
-                  <p className="text-sm font-semibold text-emerald-900 dark:text-emerald-200">
-                    {isHindi ? 'इस महीने का खर्च' : 'Spent this month'}
-                  </p>
-                  <p className="mt-2 text-3xl font-bold text-zinc-900 dark:text-zinc-50">
-                    {formatINR(monthSpentPaise, { showPaise: false })}
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-zinc-100 p-5 dark:bg-zinc-800">
-                  <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">
-                    {isHindi ? 'आज का खर्च' : 'Spent today'}
-                  </p>
-                  <p className="mt-2 text-3xl font-bold text-zinc-900 dark:text-zinc-50">
-                    {formatINR(todaySpendPaise, { showPaise: false })}
-                  </p>
-                  <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-                    {isHindi
-                      ? `${todayTransactions.length} खर्च आज`
-                      : `${todayTransactions.length} expenses today`}
-                  </p>
-                </div>
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+        {/* Top Hero Section: Total Balance & Quick Actions */}
+        <section className="relative overflow-hidden rounded-3xl border border-zinc-200 bg-linear-to-b from-white to-zinc-50/50 p-6 shadow-xs dark:border-zinc-800 dark:from-zinc-900 dark:to-zinc-950 sm:p-8">
+          <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                {isHindi ? 'उपलब्ध कुल खर्च राशि (Available Balance)' : 'Total Available Spending Balance'}
+              </span>
+              <div className="mt-2 flex items-baseline gap-3">
+                <h1 className="text-3xl font-black tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-5xl">
+                  {formatINR(totalSpendingBalancePaise, { showPaise: false })}
+                </h1>
+                {totalSavingsBalancePaise > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                    <span>+ {formatINR(totalSavingsBalancePaise, { showPaise: false })} {isHindi ? 'बचत' : 'saved'}</span>
+                  </span>
+                )}
               </div>
+              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+                {isHindi
+                  ? 'बैंक (UPI) और नकद का कुल जोड़। बिना किसी उलझन के रोज का सीधा हिसाब।'
+                  : 'Total liquid balance across your Bank (UPI) and Cash in hand.'}
+              </p>
+            </div>
 
-              <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {/* 3 Primary Action Buttons */}
+            <div className="grid grid-cols-2 gap-2.5 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setNewTransactionType('expense');
+                  setIsAddModalOpen(true);
+                }}
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-zinc-900 px-4 py-3 text-sm font-bold text-white shadow-md transition hover:bg-zinc-800 active:scale-95 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-100 sm:px-6"
+              >
+                <span>{isHindi ? '− खर्च जोड़ें' : '− Add Expense'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setNewTransactionType('income');
+                  setIsAddModalOpen(true);
+                }}
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-zinc-300 bg-white px-4 py-3 text-sm font-bold text-zinc-900 shadow-xs transition hover:bg-zinc-50 active:scale-95 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 sm:px-5"
+              >
+                <span>{isHindi ? '+ कमाई जोड़ें' : '+ Add Income'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setNewTransactionType('transfer');
+                  setIsAddModalOpen(true);
+                }}
+                className="col-span-2 inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-blue-200 bg-blue-50/70 px-4 py-3 text-sm font-bold text-blue-800 shadow-xs transition hover:bg-blue-100 active:scale-95 dark:border-blue-900/50 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60 sm:col-span-1 sm:px-5"
+              >
+                <ArrowRightLeft className="h-4 w-4" />
+                <span>{isHindi ? '⇄ ट्रांसफर / ATM' : '⇄ Transfer / ATM'}</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* Account Cards: Bank, Cash (with Reconcile), and Savings */}
+        <section className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+              {isHindi ? 'आपके खाते' : 'Your Accounts'}
+            </h2>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+              {isHindi ? 'पैसों की सही जगह' : 'Where your money lives'}
+            </span>
+          </div>
+
+          <AccountCards
+            accounts={accounts}
+            onReconcile={handleReconcileAccount}
+            onOpenTransferModal={() => {
+              setNewTransactionType('transfer');
+              setIsAddModalOpen(true);
+            }}
+            language={language}
+          />
+        </section>
+
+        {/* Period Selector & Summary Stats */}
+        <section className="space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+              <span className="hidden text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 sm:inline">
+                {isHindi ? 'समय:' : 'Period:'}
+              </span>
+              <div className="grid w-full grid-cols-3 gap-1 rounded-xl bg-zinc-200/60 p-0.5 dark:bg-zinc-800 sm:flex sm:w-auto sm:gap-0">
                 <button
-                  onClick={() => {
-                    setNewTransactionType('expense');
-                    setIsAddModalOpen(true);
-                  }}
-                  className="min-h-14 rounded-2xl bg-emerald-600 px-5 text-lg font-bold text-white shadow-sm transition hover:bg-emerald-500"
+                  type="button"
+                  onClick={() => handleCycleChange('weekly')}
+                  className={`flex items-center justify-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition sm:px-3 ${
+                    timeRange === 'weekly'
+                      ? 'bg-white text-zinc-900 shadow-xs dark:bg-zinc-700 dark:text-zinc-100'
+                      : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200'
+                  }`}
                 >
-                  {isHindi ? '+ खर्च जोड़ें' : '+ Add expense'}
+                  <Zap className="h-3 w-3 text-amber-500" />
+                  <span>{isHindi ? 'सप्ताह' : 'This Week'}</span>
                 </button>
                 <button
-                  onClick={() => {
-                    setNewTransactionType('income');
-                    setIsAddModalOpen(true);
-                  }}
-                  className="min-h-14 rounded-2xl border-2 border-emerald-700 px-5 text-lg font-bold text-emerald-800 transition hover:bg-emerald-50 dark:border-emerald-500 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+                  type="button"
+                  onClick={() => handleCycleChange('monthly')}
+                  className={`flex items-center justify-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition sm:px-3 ${
+                    timeRange === 'monthly'
+                      ? 'bg-white text-zinc-900 shadow-xs dark:bg-zinc-700 dark:text-zinc-100'
+                      : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200'
+                  }`}
                 >
-                  {isHindi ? '+ कमाई जोड़ें' : '+ Add income'}
+                  <Calendar className="h-3 w-3 text-emerald-500" />
+                  <span>{isHindi ? 'महीना' : 'This Month'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCycleChange('all')}
+                  className={`flex items-center justify-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition sm:px-3 ${
+                    timeRange === 'all'
+                      ? 'bg-white text-zinc-900 shadow-xs dark:bg-zinc-700 dark:text-zinc-100'
+                      : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200'
+                  }`}
+                >
+                  <Layers className="h-3 w-3 text-cyan-500" />
+                  <span>{isHindi ? 'सभी' : 'All Time'}</span>
                 </button>
               </div>
             </div>
 
-            <TransactionFeed
-              transactions={transactions}
-              onDeleteTransaction={handleDeleteTransaction}
-              onOpenAddModal={() => {
-                setNewTransactionType('expense');
-                setIsAddModalOpen(true);
-              }}
-              simpleMode
-              language={language}
-              onShowAllTransactions={() => setIsSimpleView(false)}
-            />
-
-            <button
-              onClick={() => setIsSimpleView(false)}
-              className="min-h-12 w-full rounded-xl text-sm font-semibold text-zinc-500 underline underline-offset-4 transition hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white"
-            >
-              {isHindi ? 'पैसों की और जानकारी' : 'More money details'}
-            </button>
-          </section>
-        )}
-
-        {/* Cycle Tracking & Reset Toolbar */}
-        {!isSimpleView && <div className="flex flex-col gap-3 rounded-2xl border border-zinc-200/80 bg-white/90 p-3.5 shadow-2xs dark:border-zinc-800 dark:bg-zinc-900/90 sm:flex-row sm:items-center sm:justify-between">
-          {/* Cycle Selector Pills */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500">
-              {isHindi ? 'समय:' : 'Time:'}
-            </span>
-            <div className="flex rounded-xl bg-zinc-100 p-0.5 dark:bg-zinc-800">
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                {cycleRangeLabel}
+              </span>
               <button
-                onClick={() => handleCycleChange('weekly')}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                  timeRange === 'weekly'
-                    ? 'bg-white text-zinc-900 shadow-2xs dark:bg-zinc-700 dark:text-zinc-100'
-                    : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
-                }`}
+                type="button"
+                onClick={() => setIsResetModalOpen(true)}
+                className="flex items-center gap-1 rounded-xl border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-600 shadow-2xs hover:bg-zinc-50 hover:text-rose-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:text-rose-400"
               >
-                <Zap className="h-3 w-3 text-amber-500" />
-                <span>{isHindi ? 'इस सप्ताह' : 'This Week'}</span>
-              </button>
-              <button
-                onClick={() => handleCycleChange('monthly')}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                  timeRange === 'monthly'
-                    ? 'bg-white text-zinc-900 shadow-2xs dark:bg-zinc-700 dark:text-zinc-100'
-                    : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
-                }`}
-              >
-                <Calendar className="h-3 w-3 text-emerald-500" />
-                <span>{isHindi ? 'इस महीने' : 'This Month'}</span>
-              </button>
-              <button
-                onClick={() => handleCycleChange('all')}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                  timeRange === 'all'
-                    ? 'bg-white text-zinc-900 shadow-2xs dark:bg-zinc-700 dark:text-zinc-100'
-                    : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
-                }`}
-              >
-                <Layers className="h-3 w-3 text-cyan-500" />
-                <span>{isHindi ? 'पूरा हिसाब' : 'All Time'}</span>
+                <RotateCcw className="h-3 w-3" />
+                <span>{isHindi ? 'रीसेट' : 'Reset'}</span>
               </button>
             </div>
           </div>
 
-          {/* Active Range & Reset Action */}
-          <div className="flex items-center justify-between gap-3 sm:justify-end">
-            <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400" suppressHydrationWarning>
-              {isHindi
-                ? timeRange === 'weekly'
-                  ? 'इस सप्ताह'
-                  : timeRange === 'monthly'
-                    ? new Date().toLocaleDateString('hi-IN', { month: 'long', year: 'numeric' })
-                    : 'पूरा हिसाब'
-                : cycleRangeLabel}
-            </span>
-            <button
-              onClick={() => setIsResetModalOpen(true)}
-              className="flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300"
-              title={isHindi ? 'लेन-देन का हिसाब साफ़ करें' : 'Reset cycle or transaction history'}
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              <span>{isHindi ? 'हिसाब रीसेट करें' : 'Reset cycle'}</span>
-            </button>
-          </div>
-          <button
-            onClick={() => setIsSimpleView(true)}
-            className="min-h-10 rounded-xl px-3 text-sm font-semibold text-zinc-600 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
-          >
-            {isHindi ? 'आसान होम' : 'Simple home'}
-          </button>
-        </div>}
-
-        {/* Dashboard Grid */}
-        {!isSimpleView && <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
-          {/* Left / Main Column: Balances, Visual Analytics & Transactions */}
-          <div className="space-y-8 lg:col-span-2">
-            {/* Live Total Balance & Fluctuation Cockpit */}
-            <TotalBalanceCard
-              transactions={cycleTransactions}
-              startingBalanceRupees={startingBalanceRupees}
-              onUpdateStartingBalance={handleUpdateStartingBalance}
-              language={language}
-            />
-
-            {/* Dual Analytics Row: Safe to Spend Pace & 7-Day Activity Chart */}
-            <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-              <SafeToSpendCard pulse={pulse} onUpdateBudget={handleUpdateBudget} language={language} />
-              <SpendingTrendChart
-                transactions={cycleTransactions}
-                dailyAllowancePaise={pulse.dailySafeAllowancePaise}
-                language={language}
-              />
+          {/* 3 Simple Snapshot Cards */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="rounded-3xl border border-emerald-100 bg-white p-5 shadow-xs dark:border-emerald-950/50 dark:bg-zinc-900">
+              <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                <span>{isHindi ? 'कुल कमाई' : 'Total Income'}</span>
+                <ArrowUpRight className="h-4 w-4" />
+              </div>
+              <p className="mt-2 text-2xl font-black text-emerald-600 dark:text-emerald-400">
+                {formatINR(cycleIncomePaise, { showPaise: false })}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                {isHindi ? 'इस अवधि में जमा हुई राशि' : 'Money earned in this period'}
+              </p>
             </div>
 
-            {/* Transactions Feed & Statement Actions */}
+            <div className="rounded-3xl border border-rose-100 bg-white p-5 shadow-xs dark:border-rose-950/50 dark:bg-zinc-900">
+              <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400">
+                <span>{isHindi ? 'कुल खर्च' : 'Total Spent'}</span>
+                <ArrowDownRight className="h-4 w-4" />
+              </div>
+              <p className="mt-2 text-2xl font-black text-rose-600 dark:text-rose-400">
+                {formatINR(cycleSpentPaise, { showPaise: false })}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                {isHindi ? 'बैंक और नकद से किया गया खर्च' : 'Spent across Bank & Cash'}
+              </p>
+            </div>
+
+            <div className="rounded-3xl border border-blue-100 bg-white p-5 shadow-xs dark:border-blue-950/50 dark:bg-zinc-900">
+              <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">
+                <span>{isHindi ? 'आज का खर्च' : 'Spent Today'}</span>
+                <span className="text-[11px] font-semibold text-zinc-400">{todayTransactions.length} {isHindi ? 'खर्च' : 'records'}</span>
+              </div>
+              <p className="mt-2 text-2xl font-black text-zinc-900 dark:text-zinc-50">
+                {formatINR(todaySpendPaise, { showPaise: false })}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                {isHindi ? 'आज का कुल खर्च' : 'Money spent today'}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* Main Content Grid: Transactions on Left, Category Breakdown & Tips on Right */}
+        <section className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+          {/* Left Column: Transaction Feed (2/3 width) */}
+          <div className="space-y-6 lg:col-span-2">
             <TransactionFeed
               transactions={cycleTransactions}
               onDeleteTransaction={handleDeleteTransaction}
@@ -678,32 +960,106 @@ export default function Home() {
             />
           </div>
 
-          {/* Right Column: WhatsApp Linker & Category Breakdown */}
-          <div className="space-y-8 lg:col-span-1">
-            {/* WhatsApp Integration Widget */}
-            <WhatsAppLinkCard
-              isLinked={isPhoneLinked}
-              linkedPhone={linkedPhone}
-              onSuccess={handlePhoneLinkedSuccess}
-              language={language}
-            />
-
-            {/* Category Breakdown */}
+          {/* Right Column: Category Breakdown & How It Works (1/3 width) */}
+          <div className="space-y-6 lg:col-span-1">
             <CategoryBreakdown
               categories={categoryItems}
               totalSpendPaise={cycleSpentPaise}
               language={language}
             />
+
+            {/* How It Works Guide Card */}
+            <div className="rounded-3xl border border-zinc-200 bg-linear-to-b from-zinc-50/80 to-white p-5 shadow-xs dark:border-zinc-800 dark:from-zinc-900/60 dark:to-zinc-900">
+              <div className="flex items-center gap-2">
+                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400">
+                  <Sparkles className="h-4 w-4" />
+                </span>
+                <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                  {isHindi ? 'आसान गाइड (कैसे इस्तेमाल करें)' : 'Simple Guide: How It Works'}
+                </h3>
+              </div>
+
+              <div className="mt-4 space-y-3 text-xs text-zinc-600 dark:text-zinc-300">
+                <div className="flex items-start gap-2.5">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
+                    1
+                  </span>
+                  <p>
+                    <strong className="text-zinc-900 dark:text-zinc-100">
+                      {isHindi ? 'ऑनलाइन भुगतान (GPay / PhonePe):' : 'Online / UPI Payment:'}
+                    </strong>{' '}
+                    {isHindi
+                      ? 'खर्च जोड़ते समय Bank / UPI खाता चुनें।'
+                      : 'Choose Bank / UPI account when adding the expense.'}
+                  </p>
+                </div>
+
+                <div className="flex items-start gap-2.5">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
+                    2
+                  </span>
+                  <p>
+                    <strong className="text-zinc-900 dark:text-zinc-100">
+                      {isHindi ? 'नकद खर्च (चाय, ऑटो, सब्जी):' : 'Cash Expense (Chai, Auto, Cash):'}
+                    </strong>{' '}
+                    {isHindi ? 'खर्च जोड़ते समय Cash खाता चुनें।' : 'Choose Cash account when spending cash.'}
+                  </p>
+                </div>
+
+                <div className="flex items-start gap-2.5">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
+                    3
+                  </span>
+                  <p>
+                    <strong className="text-zinc-900 dark:text-zinc-100">
+                      {isHindi ? 'ATM निकासी (ATM Withdrawal):' : 'ATM Cash Withdrawal:'}
+                    </strong>{' '}
+                    {isHindi
+                      ? '⇄ ट्रांसफर बटन दबाएं और Bank से Cash में पैसे ट्रांसफर करें।'
+                      : 'Click ⇄ Transfer to move money from Bank to Cash (not an expense!).'}
+                  </p>
+                </div>
+
+                <div className="flex items-start gap-2.5">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
+                    4
+                  </span>
+                  <p>
+                    <strong className="text-zinc-900 dark:text-zinc-100">
+                      {isHindi ? 'जेब का नकद मिलाना (Adjust Cash):' : 'Sync Real Cash:'}
+                    </strong>{' '}
+                    {isHindi
+                      ? 'Cash कार्ड पर "गिनती से मिलाएं" दबाएं और जेब का असली नकद दर्ज करें।'
+                      : 'Click "Count & Match" on Cash card whenever your physical cash differs.'}
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>}
+        </section>
+
+        {/* Mobile Floating Action Button (FAB) for quick access anywhere */}
+        <div className="fixed bottom-6 right-5 z-30 sm:hidden">
+          <button
+            type="button"
+            onClick={() => {
+              setNewTransactionType('expense');
+              setIsAddModalOpen(true);
+            }}
+            className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-600 text-white shadow-2xl shadow-emerald-600/50 transition hover:bg-emerald-500 active:scale-90"
+            aria-label={isHindi ? 'नया खर्च दर्ज करें' : 'Add new transaction'}
+          >
+            <span className="text-2xl font-black leading-none">+</span>
+          </button>
+        </div>
       </main>
 
       {/* Sign In / Switch Account Modal */}
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
-        onSuccess={handlePhoneLinkedSuccess}
-        currentPhone={linkedPhone}
+        onSuccess={handleAuthSuccess}
+        currentUserEmail={userEmail}
         language={language}
       />
 
@@ -716,13 +1072,14 @@ export default function Home() {
         language={language}
       />
 
-      {/* Manual Add Transaction Modal */}
+      {/* Manual Add Transaction / Transfer Modal */}
       <AddTransactionModal
-        key={newTransactionType}
+        key={`${newTransactionType}-${accounts.length}`}
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         initialType={newTransactionType}
-        isAuthenticated={isPhoneLinked}
+        accounts={accounts}
+        isAuthenticated={isAuthenticated}
         onSubmit={handleAddTransaction}
         language={language}
       />

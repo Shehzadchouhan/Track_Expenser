@@ -29,6 +29,8 @@ export function categoryLabel(category: string, language: AppLanguage): string {
   if (language === 'en') return category;
 
   const hindiLabels: Record<string, string> = {
+    'Online Deposit': 'ऑनलाइन जमा / बैलेंस',
+    'Cash Deposit': 'नकद जमा / बैलेंस',
     Salary: 'वेतन',
     Freelance: 'फ्रीलांस',
     Investment: 'निवेश',

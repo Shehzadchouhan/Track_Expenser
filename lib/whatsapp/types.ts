@@ -29,6 +29,17 @@ export interface MetaIncomingMessage {
   text?: MetaMessageText;
   image?: MetaMessageImage;
   document?: MetaMessageDocument;
+  interactive?: {
+    type: 'button_reply' | 'list_reply';
+    button_reply?: {
+      id: string;
+      title: string;
+    };
+  };
+  button?: {
+    text: string;
+    payload?: string;
+  };
 }
 
 export interface MetaWebhookChangeValue {
@@ -115,6 +126,30 @@ export function extractIncomingMessage(payload: unknown): ExtractedMessage | nul
           senderName: contact?.profile?.name || 'User',
           type: 'text',
           text: msg.text.body.trim(),
+          timestamp: msg.timestamp,
+        };
+      }
+
+      if (msg.type === 'interactive' && msg.interactive?.button_reply) {
+        return {
+          fromPhone,
+          rawPhone,
+          messageId: msg.id,
+          senderName: contact?.profile?.name || 'User',
+          type: 'text',
+          text: msg.interactive.button_reply.title || msg.interactive.button_reply.id,
+          timestamp: msg.timestamp,
+        };
+      }
+
+      if (msg.type === 'button' && msg.button) {
+        return {
+          fromPhone,
+          rawPhone,
+          messageId: msg.id,
+          senderName: contact?.profile?.name || 'User',
+          type: 'text',
+          text: msg.button.text || msg.button.payload,
           timestamp: msg.timestamp,
         };
       }

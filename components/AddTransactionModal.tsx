@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ImagePlus, LoaderCircle, Mic, PlusCircle, X } from 'lucide-react';
+import { ImagePlus, LoaderCircle, Mic, PlusCircle, X, ArrowRightLeft, Landmark, Banknote } from 'lucide-react';
 import Image from 'next/image';
 import { DEFAULT_CATEGORIES } from '@/lib/constants';
 import { categoryLabel, type AppLanguage } from '@/lib/i18n';
+import type { DashboardAccount } from './AccountCards';
 
 interface SpeechRecognitionResult extends Event {
   results: ArrayLike<ArrayLike<{ transcript: string }>>;
@@ -23,6 +24,7 @@ interface SpeechRecognitionInstance {
   onend: (() => void) | null;
   start: () => void;
   stop: () => void;
+  abort: () => void;
 }
 
 interface SpeechRecognitionConstructor {
@@ -32,13 +34,17 @@ interface SpeechRecognitionConstructor {
 interface AddTransactionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  initialType?: 'expense' | 'income';
+  initialType?: 'expense' | 'income' | 'transfer';
+  initialAccountId?: string;
+  accounts?: DashboardAccount[];
   isAuthenticated: boolean;
   language: AppLanguage;
   onSubmit: (data: {
-    type: 'expense' | 'income';
+    type: 'expense' | 'income' | 'transfer';
     amountRupees: number;
-    category: string;
+    accountId?: string | null;
+    transferToAccountId?: string | null;
+    category?: string;
     merchant?: string;
     note?: string;
     occurredAt?: string;
@@ -47,7 +53,7 @@ interface AddTransactionModalProps {
 
 function extractSpokenAmount(transcript: string): string | null {
   const normalized = transcript
-    .replace(/[०-९]/g, (digit) => String('०१२३४५६७८९'.indexOf(digit)));
+    .replace(/[०-९]/g, (digit) => String('०१२३४५६र्ट९'.indexOf(digit)));
   const match = normalized.match(/(?:₹|rs\.?|rupees?|inr|रुपये?|रुपया|रु\.?)?\s*([\d,]+(?:\.\d{1,2})?)/i);
   if (!match) return null;
 
@@ -77,13 +83,30 @@ export function AddTransactionModal({
   isOpen,
   onClose,
   initialType = 'expense',
+  initialAccountId,
+  accounts = [],
   isAuthenticated,
   language,
   onSubmit,
 }: AddTransactionModalProps) {
-  const [type, setType] = useState<'expense' | 'income'>(initialType);
+  const isHindi = language === 'hi';
+  const defaultBank = accounts.find((a) => a.type === 'bank' || a.is_default) || accounts[0];
+  const defaultCash = accounts.find((a) => a.type === 'cash') || accounts[1] || accounts[0];
+
+  const [type, setType] = useState<'expense' | 'income' | 'transfer'>(initialType);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>(
+    initialAccountId || defaultBank?.id || ''
+  );
   const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState(initialType === 'income' ? 'Salary' : 'Food & Dining');
+  const [category, setCategory] = useState(
+    initialType === 'income'
+      ? (initialAccountId === defaultCash?.id ? 'Cash Deposit' : 'Online Deposit')
+      : 'Food & Dining'
+  );
+
+  const [fromAccountId, setFromAccountId] = useState<string>(defaultBank?.id || '');
+  const [toAccountId, setToAccountId] = useState<string>(defaultCash?.id || '');
+
   const [merchant, setMerchant] = useState('');
   const [note, setNote] = useState('');
   const [isListening, setIsListening] = useState(false);
@@ -99,103 +122,122 @@ export function AddTransactionModal({
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
 
   useEffect(() => {
+    setType(initialType);
+    if (initialType === 'transfer') {
+      setMerchant(isHindi ? 'ATM निकासी' : 'ATM Withdrawal');
+    }
+    if (initialType === 'income') {
+      setCategory(selectedAccountId === defaultCash?.id ? 'Cash Deposit' : 'Online Deposit');
+    }
+  }, [initialType, isHindi, selectedAccountId, defaultCash]);
+
+  useEffect(() => {
+    if (initialAccountId) {
+      setSelectedAccountId(initialAccountId);
+    }
+  }, [initialAccountId]);
+
+  useEffect(() => {
+    if (accounts.length > 0 && !selectedAccountId) {
+      setSelectedAccountId(initialAccountId || defaultBank?.id || accounts[0].id);
+      setFromAccountId(defaultBank?.id || accounts[0].id);
+      setToAccountId(defaultCash?.id || accounts[1]?.id || accounts[0].id);
+    }
+  }, [accounts, defaultBank, defaultCash, selectedAccountId, initialAccountId]);
+
+  useEffect(() => {
     return () => {
-      if (imagePreviewUrlRef.current) URL.revokeObjectURL(imagePreviewUrlRef.current);
+      if (imagePreviewUrlRef.current) {
+        URL.revokeObjectURL(imagePreviewUrlRef.current);
+      }
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+      }
     };
   }, []);
 
   if (!isOpen) return null;
 
-  const isHindi = language === 'hi';
   const handleClose = () => {
-    recognitionRef.current?.stop();
-    recognitionRef.current = null;
-    setIsListening(false);
-    if (imagePreviewUrlRef.current) URL.revokeObjectURL(imagePreviewUrlRef.current);
-    imagePreviewUrlRef.current = null;
+    if (imagePreviewUrlRef.current) {
+      URL.revokeObjectURL(imagePreviewUrlRef.current);
+      imagePreviewUrlRef.current = null;
+    }
     setImagePreviewUrl(null);
-    setOccurredAt(undefined);
-    setScanConfidence(null);
+    if (recognitionRef.current) {
+      recognitionRef.current.abort();
+      recognitionRef.current = null;
+    }
+    setIsListening(false);
     onClose();
   };
 
-  const handleScanImage = async (file: File | undefined) => {
+  const handleScanImage = async (file?: File) => {
     if (!file) return;
-    if (file.size === 0 || file.size > 6 * 1024 * 1024) {
-      setError(isHindi ? 'तस्वीर 6 MB से छोटी होनी चाहिए।' : 'Choose an image smaller than 6 MB.');
-      return;
-    }
+
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      setError(isHindi ? 'JPG, PNG या WebP तस्वीर चुनें।' : 'Choose a JPG, PNG, or WebP image.');
+      setError(
+        isHindi
+          ? 'कृपया JPG, PNG या WebP फ़ाइल चुनें।'
+          : 'Please select a JPG, PNG, or WebP image.'
+      );
       return;
     }
 
-    if (imagePreviewUrlRef.current) URL.revokeObjectURL(imagePreviewUrlRef.current);
-    imagePreviewUrlRef.current = URL.createObjectURL(file);
-    setImagePreviewUrl(imagePreviewUrlRef.current);
-    setError(null);
+    if (file.size > 6 * 1024 * 1024) {
+      setError(
+        isHindi
+          ? 'तस्वीर 6 MB से छोटी होनी चाहिए।'
+          : 'Image size must be 6 MB or less.'
+      );
+      return;
+    }
+
+    if (imagePreviewUrlRef.current) {
+      URL.revokeObjectURL(imagePreviewUrlRef.current);
+    }
+    const previewUrl = URL.createObjectURL(file);
+    imagePreviewUrlRef.current = previewUrl;
+    setImagePreviewUrl(previewUrl);
+
     setIsScanning(true);
-    setAmount('');
-    setMerchant('');
-    setNote('');
+    setError(null);
     setScanConfidence(null);
-    setOccurredAt(undefined);
 
     try {
       const formData = new FormData();
-      formData.set('image', file);
+      formData.append('image', file);
+
       const response = await fetch('/api/transactions/parse-image', {
         method: 'POST',
         body: formData,
       });
-      const result: {
-        error?: string;
-        transaction?: {
-          type: 'expense' | 'income';
-          amount_paise: number;
-          category: string;
-          merchant?: string | null;
-          note?: string | null;
-          occurred_at?: string;
-          confidence: number;
-        };
-      } = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error || 'Could not scan this image.');
+
+      const result = await response.json();
+      if (!response.ok || !result.extracted) {
+        throw new Error(result.error || 'Failed to scan image');
       }
 
-      const extracted = result.transaction;
-      if (
-        !extracted ||
-        !Number.isFinite(extracted.amount_paise) ||
-        extracted.amount_paise <= 0 ||
-        !['expense', 'income'].includes(extracted.type)
-      ) {
-        throw new Error(isHindi ? 'तस्वीर में लेन-देन नहीं मिला।' : 'No valid transaction was found in this image.');
+      const extracted = result.extracted;
+      if (extracted.transaction) {
+        const tx = extracted.transaction;
+        setType(tx.type === 'income' ? 'income' : 'expense');
+        setAmount((tx.amount_paise / 100).toString());
+        setCategory(tx.category || (tx.type === 'income' ? 'Salary' : 'Food & Dining'));
+        if (tx.merchant) setMerchant(tx.merchant);
+        if (tx.note) setNote(tx.note);
+        if (tx.occurred_at) setOccurredAt(tx.occurred_at);
+        // Screenshots automatically route to Online / Bank account
+        if (defaultBank) setSelectedAccountId(defaultBank.id);
       }
-      const matchedCategory = DEFAULT_CATEGORIES.find(
-        (item) =>
-          item.name.toLowerCase() === String(extracted.category).toLowerCase() &&
-          item.kind === extracted.type
-      );
-      setType(extracted.type);
-      setCategory(
-        matchedCategory?.name ??
-          (extracted.type === 'income' ? 'Other Income' : 'Other Expense')
-      );
-      setAmount((extracted.amount_paise / 100).toFixed(2).replace(/\.00$/, ''));
-      setMerchant(extracted.merchant || '');
-      setNote(extracted.note || '');
-      setOccurredAt(extracted.occurred_at);
+
       setScanConfidence(extracted.confidence);
       setShowDetails(true);
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : isHindi
-            ? 'तस्वीर पढ़ी नहीं जा सकी। कृपया फिर कोशिश करें।'
-            : 'Could not read this image. Please try again.'
+          : isHindi ? 'तस्वीर पढ़ी नहीं जा सकी।' : 'Could not read this image.'
       );
     } finally {
       setIsScanning(false);
@@ -213,8 +255,8 @@ export function AddTransactionModal({
     if (!SpeechRecognitionApi) {
       setError(
         isHindi
-          ? 'इस ब्राउज़र में आवाज़ से लिखने की सुविधा नहीं है। कृपया रकम टाइप करें।'
-          : 'Voice entry is not available in this browser. Please type the amount.'
+          ? 'इस ब्राउज़र में आवाज़ से लिखने की सुविधा नहीं है।'
+          : 'Voice entry is not available in this browser.'
       );
       return;
     }
@@ -226,34 +268,19 @@ export function AddTransactionModal({
     recognition.maxAlternatives = 1;
     recognition.onresult = (event) => {
       const transcript = event.results[0]?.[0]?.transcript?.trim();
-      if (!transcript) {
-        setError(isHindi ? 'आवाज़ समझ नहीं आई। फिर से कोशिश करें।' : 'I could not hear that. Please try again.');
-        return;
-      }
+      if (!transcript) return;
 
       const spokenAmount = extractSpokenAmount(transcript);
       const description = extractDescription(transcript);
       if (spokenAmount) setAmount(spokenAmount);
       if (description) setMerchant(description);
 
-      if (!spokenAmount) {
-        setError(
-          isHindi
-            ? 'खर्च की रकम साफ़ नहीं सुनाई दी। रकम टाइप करें और फिर सेव करें।'
-            : 'I could not catch the amount. Type it in, then save your record.'
-        );
+      // If speech mentions cash, route to cash account
+      if (/cash|नकद|रोड़ा/i.test(transcript) && defaultCash) {
+        setSelectedAccountId(defaultCash.id);
       }
     };
-    recognition.onerror = (event) => {
-      setError(
-        event.error === 'not-allowed'
-          ? isHindi
-            ? 'आवाज़ इस्तेमाल करने के लिए माइक्रोफ़ोन की अनुमति दें।'
-            : 'Allow microphone access to use voice entry.'
-          : isHindi
-            ? 'आवाज़ रिकॉर्ड नहीं हो पाई। कृपया फिर से कोशिश करें।'
-            : 'Voice entry did not work. Please try again.'
-      );
+    recognition.onerror = () => {
       setIsListening(false);
     };
     recognition.onend = () => {
@@ -265,10 +292,9 @@ export function AddTransactionModal({
     try {
       recognition.start();
       setIsListening(true);
-    } catch (err) {
+    } catch {
       recognitionRef.current = null;
       setIsListening(false);
-      setError(err instanceof Error ? err.message : 'Could not start voice entry. Please try again.');
     }
   };
 
@@ -280,52 +306,51 @@ export function AddTransactionModal({
       return;
     }
 
+    if (type === 'transfer' && fromAccountId === toAccountId) {
+      setError(
+        isHindi
+          ? 'भेजने और पाने वाला खाता अलग-अलग होना चाहिए।'
+          : 'Source and destination accounts must be different.'
+      );
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
       await onSubmit({
         type,
         amountRupees,
-        category,
+        accountId: type === 'transfer' ? fromAccountId : selectedAccountId,
+        transferToAccountId: type === 'transfer' ? toAccountId : undefined,
+        category: type === 'transfer' ? 'Transfer' : category,
         merchant: merchant.trim() || undefined,
         note: note.trim() || undefined,
         occurredAt,
       });
-      setAmount('');
-      setMerchant('');
-      setNote('');
-      setOccurredAt(undefined);
-      setScanConfidence(null);
-      setShowDetails(false);
       handleClose();
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : isHindi
-            ? 'रिकॉर्ड सेव नहीं हुआ। कृपया फिर से कोशिश करें।'
-            : 'Your record could not be saved. Please try again.'
-      );
+      setError(err instanceof Error ? err.message : 'Could not save record.');
     } finally {
       setLoading(false);
     }
   };
 
-  const categories = DEFAULT_CATEGORIES.filter((item) => item.kind === type);
+  const categories = DEFAULT_CATEGORIES.filter((item) => item.kind === (type === 'transfer' ? 'expense' : type));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4 backdrop-blur-sm">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="add-transaction-title"
-        className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-3xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
+        className="max-h-[92vh] sm:max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-3xl sm:rounded-3xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
       >
         <div className="flex items-center justify-between border-b border-zinc-100 p-5 dark:border-zinc-800">
           <div className="flex items-center gap-3">
             <PlusCircle className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
             <h2 id="add-transaction-title" className="text-lg font-bold text-zinc-900 dark:text-zinc-100">
-              {isHindi ? 'खर्च या कमाई जोड़ें' : 'Add money record'}
+              {isHindi ? 'लेन-देन दर्ज करें' : 'Record Transaction'}
             </h2>
           </div>
           <button
@@ -338,78 +363,49 @@ export function AddTransactionModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5 p-5">
-          <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-700 dark:bg-zinc-800/60">
-            <input
-              ref={imageInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              capture="environment"
-              className="hidden"
-              aria-label={isHindi ? 'रसीद या लेन-देन की तस्वीर चुनें' : 'Choose receipt or transaction image'}
-              onChange={(event) => {
-                void handleScanImage(event.currentTarget.files?.[0]);
-                event.currentTarget.value = '';
-              }}
-            />
-            <button
-              type="button"
-              disabled={!isAuthenticated || isScanning || loading}
-              onClick={() => imageInputRef.current?.click()}
-              className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-emerald-700 px-4 text-sm font-bold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-emerald-500 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
-            >
-              {isScanning ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <ImagePlus className="h-5 w-5" />}
-              {isScanning
-                ? isHindi ? 'तस्वीर पढ़ रहे हैं…' : 'Reading image…'
-                : isHindi ? 'रसीद / स्क्रीनशॉट स्कैन करें' : 'Scan receipt / screenshot'}
-            </button>
-            <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-              {isAuthenticated
-                ? isHindi
-                  ? 'JPG, PNG या WebP, अधिकतम 6 MB। तस्वीर सेव नहीं की जाती। सेव करने से पहले जानकारी जाँचें।'
-                  : 'JPG, PNG, or WebP, up to 6 MB. Images are not stored. Review details before saving.'
-                : isHindi
-                  ? 'तस्वीर स्कैन करने के लिए पहले अपने खाते में साइन इन करें।'
-                  : 'Sign in to scan an image into your account.'}
-            </p>
-            {imagePreviewUrl && (
-              <div className="mt-3 flex items-start gap-3">
-                <Image
-                  src={imagePreviewUrl}
-                  alt={isHindi ? 'चुनी हुई लेन-देन की तस्वीर' : 'Selected transaction image'}
-                  width={96}
-                  height={96}
-                  unoptimized
-                  className="max-h-24 max-w-24 rounded-lg border border-zinc-200 object-contain dark:border-zinc-700"
-                />
-                <p className="text-sm text-zinc-700 dark:text-zinc-300">
-                  {isScanning
-                    ? isHindi ? 'जानकारी निकाल रहे हैं…' : 'Extracting transaction details…'
-                    : scanConfidence !== null
-                      ? isHindi
-                        ? 'जानकारी भर दी गई है। कृपया जाँचें और फिर सेव करें।'
-                        : 'Details filled in. Please review them before saving.'
-                      : isHindi ? 'तस्वीर स्कैन नहीं हुई। विवरण हाथ से भरें।' : 'Image was not scanned. Enter the details manually.'}
-                </p>
-              </div>
-            )}
-          </div>
+        <form onSubmit={handleSubmit} className="space-y-4 p-5">
+          {/* Receipt Scanner (Online only) */}
+          {type !== 'transfer' && (
+            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3.5 dark:border-zinc-700 dark:bg-zinc-800/60">
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={(event) => {
+                  void handleScanImage(event.currentTarget.files?.[0]);
+                  event.currentTarget.value = '';
+                }}
+              />
+              <button
+                type="button"
+                disabled={!isAuthenticated || isScanning || loading}
+                onClick={() => imageInputRef.current?.click()}
+                className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-emerald-700 px-4 text-xs font-bold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-500 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
+              >
+                {isScanning ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+                {isScanning
+                  ? isHindi ? 'तस्वीर स्कैन हो रही है…' : 'Reading screenshot…'
+                  : isHindi ? 'GPay/PhonePe स्क्रीनशॉट स्कैन करें' : 'Scan GPay / PhonePe Screenshot'}
+              </button>
+            </div>
+          )}
 
-          <div className="flex gap-3">
+          {/* 3-Way Mode Switcher: Expense | Income | Transfer */}
+          <div className="grid grid-cols-3 gap-1.5 rounded-2xl bg-zinc-100 p-1 dark:bg-zinc-800">
             <button
               type="button"
               onClick={() => {
                 setType('expense');
                 setCategory('Food & Dining');
               }}
-              aria-pressed={type === 'expense'}
-              className={`min-h-14 flex-1 rounded-2xl px-3 text-base font-bold transition ${
+              className={`rounded-xl py-2.5 text-xs font-bold transition ${
                 type === 'expense'
-                  ? 'bg-rose-600 text-white shadow-sm'
-                  : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white'
               }`}
             >
-              {isHindi ? 'खर्च हुआ' : 'I spent'}
+              {isHindi ? 'खर्च' : 'Expense'}
             </button>
             <button
               type="button"
@@ -417,22 +413,192 @@ export function AddTransactionModal({
                 setType('income');
                 setCategory('Salary');
               }}
-              aria-pressed={type === 'income'}
-              className={`min-h-14 flex-1 rounded-2xl px-3 text-base font-bold transition ${
+              className={`rounded-xl py-2.5 text-xs font-bold transition ${
                 type === 'income'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white'
               }`}
             >
-              {isHindi ? 'पैसे मिले' : 'I received'}
+              {isHindi ? 'कमाई' : 'Income'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setType('transfer');
+                setMerchant(isHindi ? 'ATM निकासी' : 'ATM Withdrawal');
+              }}
+              className={`rounded-xl py-2.5 text-xs font-bold transition ${
+                type === 'transfer'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white'
+              }`}
+            >
+              {isHindi ? 'ट्रांसफर' : 'Transfer'}
             </button>
           </div>
 
+          {/* Transfer Routing Selectors */}
+          {type === 'transfer' ? (
+            <div className="space-y-3 rounded-2xl border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900/40 dark:bg-blue-950/20">
+              <div className="flex items-center gap-2 text-xs font-semibold text-blue-800 dark:text-blue-300">
+                <ArrowRightLeft className="h-4 w-4" />
+                <span>{isHindi ? 'खातों के बीच ट्रांसफर' : 'Between Accounts Transfer'}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-400">
+                    {isHindi ? 'किस खाते से:' : 'From:'}
+                  </label>
+                  <select
+                    value={fromAccountId}
+                    onChange={(e) => setFromAccountId(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-zinc-200 bg-white p-2 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-800"
+                  >
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-400">
+                    {isHindi ? 'किस खाते में:' : 'To:'}
+                  </label>
+                  <select
+                    value={toAccountId}
+                    onChange={(e) => setToAccountId(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-zinc-200 bg-white p-2 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-800"
+                  >
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <p className="text-[11px] text-blue-700/80 dark:text-blue-300/80">
+                {isHindi
+                  ? '💡 ट्रांसफर से रोज का बजट (Safe-to-Spend) प्रभावित नहीं होता।'
+                  : '💡 Transfers only move money between accounts and do not reduce Safe-to-Spend.'}
+              </p>
+            </div>
+          ) : (
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-zinc-800 dark:text-zinc-200">
+                  {type === 'income'
+                    ? (isHindi ? 'कहाँ बैलेंस जोड़ना है?' : 'Add Balance To:')
+                    : (isHindi ? 'कहाँ से खर्च हुआ?' : 'Spent From:')}
+                </label>
+                <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
+                  {isHindi ? 'ऑनलाइन व नकद अलग-अलग' : 'Separated Balances'}
+                </span>
+              </div>
+
+              {/* 2 Prominent Interactive Account Tiles: Online vs Cash */}
+              <div className="mt-2 grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (defaultBank) {
+                      setSelectedAccountId(defaultBank.id);
+                      if (type === 'income' && category === 'Cash Deposit') {
+                        setCategory('Online Deposit');
+                      }
+                    }
+                  }}
+                  className={`flex items-center gap-3 rounded-2xl border-2 p-3 text-left transition ${
+                    selectedAccountId === defaultBank?.id || (!selectedAccountId && defaultBank)
+                      ? 'border-blue-600 bg-blue-50/90 shadow-xs ring-2 ring-blue-500/20 dark:border-blue-500 dark:bg-blue-950/40'
+                      : 'border-zinc-200 bg-zinc-50/70 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-800/60'
+                  }`}
+                >
+                  <div
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+                      selectedAccountId === defaultBank?.id || (!selectedAccountId && defaultBank)
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400'
+                    }`}
+                  >
+                    <Landmark className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p
+                      className={`text-xs font-bold leading-tight ${
+                        selectedAccountId === defaultBank?.id || (!selectedAccountId && defaultBank)
+                          ? 'text-blue-950 dark:text-blue-100'
+                          : 'text-zinc-700 dark:text-zinc-300'
+                      }`}
+                    >
+                      {isHindi ? 'बैंक / UPI (Online)' : 'Bank / UPI (Online)'}
+                    </p>
+                    <p className="truncate text-[10px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                      GPay, PhonePe, Card
+                    </p>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (defaultCash) {
+                      setSelectedAccountId(defaultCash.id);
+                      if (type === 'income' && category === 'Online Deposit') {
+                        setCategory('Cash Deposit');
+                      }
+                    }
+                  }}
+                  className={`flex items-center gap-3 rounded-2xl border-2 p-3 text-left transition ${
+                    selectedAccountId === defaultCash?.id
+                      ? 'border-amber-600 bg-amber-50/90 shadow-xs ring-2 ring-amber-500/20 dark:border-amber-500 dark:bg-amber-950/40'
+                      : 'border-zinc-200 bg-zinc-50/70 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-800/60'
+                  }`}
+                >
+                  <div
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+                      selectedAccountId === defaultCash?.id
+                        ? 'bg-amber-600 text-white'
+                        : 'bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400'
+                    }`}
+                  >
+                    <Banknote className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p
+                      className={`text-xs font-bold leading-tight ${
+                        selectedAccountId === defaultCash?.id
+                          ? 'text-amber-950 dark:text-amber-100'
+                          : 'text-zinc-700 dark:text-zinc-300'
+                      }`}
+                    >
+                      {isHindi ? 'नकद (Cash in Hand)' : 'Cash (In Hand)'}
+                    </p>
+                    <p className="truncate text-[10px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                      Wallet / Pocket Cash
+                    </p>
+                  </div>
+                </button>
+              </div>
+
+              {/* Real-time Account impact helper note */}
+              <div className="mt-2 flex items-center gap-1.5 rounded-xl bg-zinc-100/70 px-3 py-1.5 text-[11px] text-zinc-600 dark:bg-zinc-800/70 dark:text-zinc-300">
+                <span>
+                  {selectedAccountId === defaultCash?.id
+                    ? type === 'income'
+                      ? (isHindi ? '💵 यह पैसा आपके "नकद (हाथ में)" बैलेंस में जुड़ेगा।' : '💵 This will add balance to your Cash in Hand.')
+                      : (isHindi ? '💵 यह खर्च आपके "नकद (हाथ में)" बैलेंस से कटेगा।' : '💵 This will be deducted from your Cash in Hand.')
+                    : type === 'income'
+                    ? (isHindi ? '💳 यह पैसा आपके "बैंक / UPI (ऑनलाइन)" बैलेंस में जुड़ेगा।' : '💳 This will add balance to your Online / Bank account.')
+                    : (isHindi ? '💳 यह खर्च आपके "बैंक / UPI (ऑनलाइन)" बैलेंस से कटेगा।' : '💳 This will be deducted from your Online / Bank account.')}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Amount Input */}
           <div>
-            <label htmlFor="transaction-amount" className="block text-base font-semibold text-zinc-800 dark:text-zinc-200">
-              {isHindi ? 'कितने रुपये?' : 'How much?'}
+            <label htmlFor="transaction-amount" className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+              {isHindi ? 'राशि (रुपये)' : 'Amount (₹)'}
             </label>
-            <div className="mt-2 flex items-center rounded-2xl border-2 border-zinc-300 bg-zinc-50 px-4 focus-within:border-emerald-500 dark:border-zinc-700 dark:bg-zinc-800">
+            <div className="mt-1.5 flex items-center rounded-2xl border-2 border-zinc-300 bg-zinc-50 px-4 focus-within:border-emerald-500 dark:border-zinc-700 dark:bg-zinc-800">
               <span className="text-2xl font-bold text-zinc-500">₹</span>
               <input
                 id="transaction-amount"
@@ -445,109 +611,97 @@ export function AddTransactionModal({
                 value={amount}
                 onChange={(event) => setAmount(event.target.value)}
                 placeholder="0"
-                className="min-h-16 w-full bg-transparent px-3 text-3xl font-bold text-zinc-900 outline-none dark:text-zinc-100"
+                className="min-h-14 w-full bg-transparent px-3 text-2xl font-bold text-zinc-900 outline-none dark:text-zinc-100"
               />
             </div>
           </div>
 
+          {/* Merchant / Description */}
           <div>
-            <label htmlFor="transaction-description" className="block text-base font-semibold text-zinc-800 dark:text-zinc-200">
-              {isHindi ? 'यह किस लिए था? (ज़रूरी नहीं)' : 'What was it for? (optional)'}
+            <label htmlFor="transaction-description" className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+              {type === 'transfer'
+                ? isHindi ? 'ट्रांसफर का विवरण' : 'Transfer purpose (e.g. ATM, Deposit)'
+                : isHindi ? 'दुकानदार / विवरण' : 'Merchant / Payee (e.g. Swiggy, Petrol)'}
             </label>
             <input
               id="transaction-description"
               type="text"
               value={merchant}
               onChange={(event) => setMerchant(event.target.value)}
-              placeholder={isHindi ? 'जैसे: खाना, बस' : 'For example: lunch, bus'}
-              className="mt-2 min-h-14 w-full rounded-2xl border border-zinc-300 bg-zinc-50 px-4 text-base font-medium text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:bg-white focus:text-zinc-900 focus:outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-500 dark:focus:border-emerald-400 dark:focus:bg-zinc-800 dark:focus:text-white"
+              placeholder={type === 'transfer' ? 'ATM Cash Withdrawal' : 'Swiggy / Chai / Metro'}
+              className="mt-1.5 min-h-11 w-full rounded-xl border border-zinc-300 bg-zinc-50 px-4 text-sm font-medium text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:bg-white dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50"
             />
           </div>
 
-          <div className="rounded-2xl bg-emerald-50 p-4 dark:bg-emerald-950/30">
-            <span className="mb-3 block text-sm font-semibold text-emerald-950 dark:text-emerald-100">
-              {isHindi ? 'बोलकर बताएं' : 'Say it instead'}
-            </span>
-            <button
-              type="button"
-              onClick={isListening ? () => recognitionRef.current?.stop() : startVoiceEntry}
-              aria-pressed={isListening}
-              className={`flex min-h-14 w-full items-center justify-center gap-2 rounded-xl px-4 text-base font-bold text-white transition ${
-                isListening ? 'bg-rose-600 hover:bg-rose-500' : 'bg-emerald-700 hover:bg-emerald-600'
-              }`}
-            >
-              <Mic className="h-5 w-5" />
-              {isListening
-                ? isHindi ? 'सुन रहे हैं… रोकने के लिए दबाएं' : 'Listening… tap to stop'
-                : isHindi ? 'बोलने के लिए दबाएं' : 'Tap to speak'}
-            </button>
-            <p className="mt-2 text-sm text-emerald-900 dark:text-emerald-200">
-              {isHindi
-                ? 'जैसे: “खर्च 50 रुपये बस के लिए”'
-                : 'For example: “Spent 50 rupees on the bus”'}
-            </p>
-          </div>
+          {/* Voice Input Button */}
+          {type !== 'transfer' && (
+            <div className="rounded-2xl bg-emerald-50/60 p-3 dark:bg-emerald-950/20">
+              <button
+                type="button"
+                onClick={isListening ? () => recognitionRef.current?.stop() : startVoiceEntry}
+                className={`flex min-h-11 w-full items-center justify-center gap-2 rounded-xl px-4 text-xs font-bold text-white transition ${
+                  isListening ? 'bg-rose-600' : 'bg-emerald-700 hover:bg-emerald-600'
+                }`}
+              >
+                <Mic className="h-4 w-4" />
+                <span>
+                  {isListening
+                    ? isHindi ? 'सुन रहे हैं… रोकने के लिए दबाएं' : 'Listening… tap to stop'
+                    : isHindi ? 'बोलकर दर्ज करें (जैसे: 250 रुपये चाय)' : 'Say it (e.g. "Spent 250 on tea")'}
+                </span>
+              </button>
+            </div>
+          )}
 
-          <button
-            type="button"
-            onClick={() => setShowDetails((open) => !open)}
-            className="min-h-11 text-sm font-medium text-zinc-600 underline underline-offset-4 hover:text-zinc-900 dark:text-zinc-300 dark:hover:text-white"
-          >
-            {showDetails
-              ? isHindi ? 'कम जानकारी दिखाएं' : 'Hide extra details'
-              : isHindi ? 'और जानकारी (ज़रूरी नहीं)' : 'Add more details (optional)'}
-          </button>
+          {/* Collapsible Details (Category, Note, Date) */}
+          {type !== 'transfer' && (
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowDetails((open) => !open)}
+                className="text-xs font-medium text-zinc-600 underline underline-offset-4 hover:text-zinc-900 dark:text-zinc-300"
+              >
+                {showDetails
+                  ? isHindi ? 'कम विवरण दिखाएं' : 'Hide extra details'
+                  : isHindi ? 'श्रेणी और तारीख बदलें' : 'Change category & date'}
+              </button>
 
-          {showDetails && (
-            <div className="space-y-4 rounded-2xl bg-zinc-50 p-4 dark:bg-zinc-800/60">
-              <div>
-                <label htmlFor="transaction-category" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                  {isHindi ? 'किस तरह का खर्च?' : 'Type of transaction'}
-                </label>
-                <select
-                  id="transaction-category"
-                  value={category}
-                  onChange={(event) => setCategory(event.target.value)}
-                  className="mt-2 min-h-12 w-full rounded-xl border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
-                >
-                  {categories.map((item) => (
-                    <option key={item.name} value={item.name}>{categoryLabel(item.name, language)}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="transaction-note" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                  {isHindi ? 'नोट' : 'Note'}
-                </label>
-                <input
-                  id="transaction-note"
-                  type="text"
-                  value={note}
-                  onChange={(event) => setNote(event.target.value)}
-                  className="mt-2 min-h-12 w-full rounded-xl border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:bg-white focus:text-zinc-900 focus:outline-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-500 dark:focus:border-emerald-400 dark:focus:bg-zinc-800 dark:focus:text-white"
-                />
-              </div>
-              {occurredAt && (
-                <div>
-                  <label htmlFor="transaction-occurred-at" className="block text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                    {isHindi ? 'लेन-देन की तारीख और समय' : 'Transaction date and time'}
-                  </label>
-                  <input
-                    id="transaction-occurred-at"
-                    type="datetime-local"
-                    value={toDateTimeLocal(occurredAt)}
-                    onChange={(event) =>
-                      setOccurredAt(event.target.value ? new Date(event.target.value).toISOString() : undefined)
-                    }
-                    className="mt-2 min-h-12 w-full rounded-xl border border-zinc-300 bg-white px-3 text-sm text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
-                  />
+              {showDetails && (
+                <div className="mt-3 space-y-3 rounded-2xl bg-zinc-50 p-3 dark:bg-zinc-800/60">
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                      {isHindi ? 'श्रेणी (Category)' : 'Category'}
+                    </label>
+                    <select
+                      value={category}
+                      onChange={(event) => setCategory(event.target.value)}
+                      className="mt-1 min-h-10 w-full rounded-xl border border-zinc-300 bg-white px-3 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                    >
+                      {categories.map((item) => (
+                        <option key={item.name} value={item.name}>{categoryLabel(item.name, language)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                      {isHindi ? 'तारीख' : 'Date'}
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={occurredAt ? toDateTimeLocal(occurredAt) : ''}
+                      onChange={(event) =>
+                        setOccurredAt(event.target.value ? new Date(event.target.value).toISOString() : undefined)
+                      }
+                      className="mt-1 min-h-10 w-full rounded-xl border border-zinc-300 bg-white px-3 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                    />
+                  </div>
                 </div>
               )}
             </div>
           )}
 
           {error && (
-            <p role="alert" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700 dark:bg-rose-950/30 dark:text-rose-300">
+            <p role="alert" className="rounded-xl bg-rose-50 p-2.5 text-xs text-rose-700 dark:bg-rose-950/30 dark:text-rose-300">
               {error}
             </p>
           )}
@@ -555,11 +709,13 @@ export function AddTransactionModal({
           <button
             type="submit"
             disabled={loading || isListening || isScanning}
-            className="min-h-14 w-full rounded-2xl bg-emerald-600 px-4 text-lg font-bold text-white shadow-sm transition hover:bg-emerald-500 disabled:opacity-50"
+            className="min-h-12 w-full rounded-2xl bg-emerald-600 px-4 text-base font-bold text-white shadow-sm transition hover:bg-emerald-500 disabled:opacity-50"
           >
             {loading
               ? isHindi ? 'सेव हो रहा है…' : 'Saving…'
-              : isHindi ? 'रिकॉर्ड सेव करें' : 'Save record'}
+              : type === 'transfer'
+              ? isHindi ? 'ट्रांसफर रिकॉर्ड करें' : 'Record Transfer'
+              : isHindi ? 'रिकॉर्ड सेव करें' : 'Save Record'}
           </button>
         </form>
       </div>

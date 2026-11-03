@@ -30,7 +30,9 @@ export const AITransactionDataSchema = z.object({
   type: z
     .preprocess((val) => {
       const s = String(val || '').toLowerCase().trim();
-      return s === 'income' ? 'income' : 'expense';
+      if (s === 'income') return 'income';
+      if (s === 'transfer') return 'transfer';
+      return 'expense';
     }, z.enum(TRANSACTION_TYPES))
     .default('expense'),
 
@@ -70,6 +72,26 @@ export const AITransactionDataSchema = z.object({
       const s = String(val).trim();
       return s.length > 0 ? s.slice(0, 280) : null;
     }, z.string().nullable().optional()),
+
+  payment_mode: z
+    .preprocess((val) => {
+      if (!val) return undefined;
+      const s = String(val).toLowerCase().trim();
+      if (['cash', 'offline'].includes(s)) return 'cash';
+      if (['online', 'bank', 'upi', 'card'].includes(s)) return 'online';
+      return undefined;
+    }, z.enum(['online', 'cash']).optional()),
+
+  transfer_type: z
+    .preprocess((val) => {
+      if (!val) return undefined;
+      const s = String(val).toLowerCase().trim();
+      if (['atm', 'atm_withdrawal', 'withdrawal'].includes(s)) return 'atm_withdrawal';
+      if (['deposit', 'cash_deposit'].includes(s)) return 'cash_deposit';
+      if (['to_savings', 'savings', 'save'].includes(s)) return 'to_savings';
+      if (['from_savings', 'withdraw_savings'].includes(s)) return 'from_savings';
+      return undefined;
+    }, z.enum(['atm_withdrawal', 'cash_deposit', 'to_savings', 'from_savings']).optional()),
 
   occurred_at: z
     .preprocess((val) => (val ? safeIsoDate(val) : undefined), z.string().optional())

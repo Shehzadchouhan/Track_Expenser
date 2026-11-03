@@ -5,7 +5,7 @@ import { DEFAULT_CATEGORIES, APP_TIMEZONE } from '../constants';
 const CATEGORY_NAMES = DEFAULT_CATEGORIES.map((c) => c.name).join(', ');
 
 /**
- * Checks for immediate zero-latency bot commands (undo, help, yes/no).
+ * Checks for immediate zero-latency bot commands (undo, help, yes/no, and instant transfer commands).
  */
 export function checkFastCommand(text: string): AIParseResult | null {
   const normalized = text.trim().toLowerCase();
@@ -56,6 +56,101 @@ export function checkFastCommand(text: string): AIParseResult | null {
     };
   }
 
+  // 1. ATM Cash Withdrawal (Online -> Cash transfer)
+  const atmMatch =
+    normalized.match(
+      /(?:atm\s*withdrawal|withdrew|withdraw|atm\s*se\s*nikale|nikale\s*atm\s*se|atm\s*cash)\s*(?:rs\.?|inr|₹)?\s*(\d+(?:,\d+)*(?:\.\d{1,2})?)/i
+    ) ||
+    normalized.match(
+      /(?:rs\.?|inr|₹)?\s*(\d+(?:,\d+)*(?:\.\d{1,2})?)\s*(?:from\s*atm|atm\s*withdrawal|atm\s*se|withdrawn\s*from\s*atm)/i
+    );
+
+  if (atmMatch && atmMatch[1]) {
+    const amount = parseFloat(atmMatch[1].replace(/,/g, ''));
+    if (!isNaN(amount) && amount > 0) {
+      return {
+        intent: 'transaction',
+        confidence: 1.0,
+        clarification_needed: false,
+        status: 'success',
+        raw_message: text,
+        transaction: {
+          type: 'transfer',
+          transfer_type: 'atm_withdrawal',
+          payment_mode: 'cash',
+          amount_paise: Math.round(amount * 100),
+          category: 'Transfer',
+          merchant: 'ATM Cash Withdrawal',
+          note: 'ATM withdrawal: Online → Cash',
+          occurred_at: new Date().toISOString(),
+        },
+      };
+    }
+  }
+
+  // 2. Cash Deposit (Cash -> Online transfer)
+  const depositMatch =
+    normalized.match(
+      /(?:cash\s*deposit|deposited|bank\s*me\s*jama|jama\s*kiye)\s*(?:rs\.?|inr|₹)?\s*(\d+(?:,\d+)*(?:\.\d{1,2})?)/i
+    ) ||
+    normalized.match(
+      /(?:rs\.?|inr|₹)?\s*(\d+(?:,\d+)*(?:\.\d{1,2})?)\s*(?:cash\s*deposit|deposit\s*in\s*bank|bank\s*deposit)/i
+    );
+
+  if (depositMatch && depositMatch[1]) {
+    const amount = parseFloat(depositMatch[1].replace(/,/g, ''));
+    if (!isNaN(amount) && amount > 0) {
+      return {
+        intent: 'transaction',
+        confidence: 1.0,
+        clarification_needed: false,
+        status: 'success',
+        raw_message: text,
+        transaction: {
+          type: 'transfer',
+          transfer_type: 'cash_deposit',
+          payment_mode: 'online',
+          amount_paise: Math.round(amount * 100),
+          category: 'Transfer',
+          merchant: 'Cash Deposit to Bank',
+          note: 'Cash deposit: Cash → Online',
+          occurred_at: new Date().toISOString(),
+        },
+      };
+    }
+  }
+
+  // 3. Move money to savings (Online -> Savings transfer)
+  const savingsMatch =
+    normalized.match(
+      /(?:saved|save|moved\s*to\s*savings|savings\s*deposit|bachat)\s*(?:rs\.?|inr|₹)?\s*(\d+(?:,\d+)*(?:\.\d{1,2})?)/i
+    ) ||
+    normalized.match(
+      /(?:rs\.?|inr|₹)?\s*(\d+(?:,\d+)*(?:\.\d{1,2})?)\s*(?:saved|to\s*savings|in\s*vault|bachat)/i
+    );
+
+  if (savingsMatch && savingsMatch[1]) {
+    const amount = parseFloat(savingsMatch[1].replace(/,/g, ''));
+    if (!isNaN(amount) && amount > 0) {
+      return {
+        intent: 'transaction',
+        confidence: 1.0,
+        clarification_needed: false,
+        status: 'success',
+        raw_message: text,
+        transaction: {
+          type: 'transfer',
+          transfer_type: 'to_savings',
+          amount_paise: Math.round(amount * 100),
+          category: 'Transfer',
+          merchant: 'Savings Vault Deposit',
+          note: 'Savings deposit: Online → Savings Vault',
+          occurred_at: new Date().toISOString(),
+        },
+      };
+    }
+  }
+
   return null;
 }
 
@@ -92,18 +187,19 @@ RULES:
    - ₹70.00 -> 7000 paise
    - "250 on tea" -> 25000 paise
    - "Uber ride to office in 250" -> 25000 paise
-2. Determine if it is "expense" (default, debited, paid, spent) or "income" (e.g. salary, freelance, received money, credited, received from X).
-   - "Received ₹70 from Mr Saurav via Paytm" -> type: "income", amount: 7000 paise, merchant: "Mr Saurav", note: "Received via Paytm", category: "Other Income"
-   - "Uber ride to office in 250" -> type: "expense", amount: 25000 paise, merchant: "Uber", note: "Ride to office", category: "Transportation"
-   - "Dear SBI User, A/C 1234 debited by Rs 450.00 on 12-Oct-26 by transfer to SWIGGY. Ref No 123456" -> type: "expense", amount: 45000 paise, merchant: "SWIGGY", note: "Transfer to SWIGGY", category: "Food & Dining"
-   - "HDFC Bank: Rs 1,500.00 debited from a/c **4321 to RELIANCE RETAIL" -> type: "expense", amount: 150000 paise, merchant: "RELIANCE RETAIL", category: "Shopping"
-   - "ICICI Bank: Acct XX123 credited with Rs 25,000.00 on 12-Oct-26. Info: NEFT-SALARY" -> type: "income", amount: 2500000 paise, merchant: null, note: "NEFT-SALARY", category: "Salary"
-3. Identify merchant / payee / sender (e.g. Starbucks, Zudio, Swiggy, Uber, Jio, HPCL Petrol, Saurav, Dad). If unknown, leave null.
-4. Pick the closest standard category. If uncertain, use "Other Expense" or "Other Income".
-5. Confidence & Clarification:
-   - If the message mentions a clear monetary amount and context, or is a bank debit/credit transaction SMS/statement, intent MUST be "transaction", confidence MUST be >= 0.9, clarification_needed MUST be false.
+2. Determine transaction type:
+   - "expense" (default, debited, paid, spent, bought)
+   - "income" (salary, freelance, received money, credited)
+   - "transfer" (ATM withdrawal, deposited cash in bank, moving money to savings)
+3. Determine payment mode:
+   - "cash" if user mentions cash, rokar, rokad, nagad, नकद, or physical notes
+   - "online" (default for UPI, GPay, PhonePe, Paytm, card, netbanking, or unstated)
+4. Identify merchant / payee / sender (e.g. Starbucks, Zudio, Swiggy, Uber, Jio, HPCL Petrol, Saurav, Dad). If unknown, leave null.
+5. Pick the closest standard category. If uncertain, use "Other Expense" or "Other Income". For transfers, use "Transfer".
+6. Confidence & Clarification:
+   - If the message mentions a clear monetary amount and context, intent MUST be "transaction", confidence >= 0.9, clarification_needed = false.
    - If ambiguous (e.g. just a lone number like "450" with zero context): confidence < 0.7, clarification_needed = true, clarification_prompt = "Did you mean ₹450 as an expense? Reply YES to confirm."
-6. If the message is completely non-financial (e.g. "how is the weather?"): set intent = "unknown", confidence = 0, transaction = null, status = "ignored".
+7. If completely non-financial (e.g. "how is the weather?"): set intent = "unknown", confidence = 0, transaction = null, status = "ignored".
 
 Return valid JSON with this exact shape:
 {
@@ -113,7 +209,9 @@ Return valid JSON with this exact shape:
   "clarification_prompt": string | null,
   "status": "success" | "ignored",
   "transaction": {
-    "type": "expense" | "income",
+    "type": "expense" | "income" | "transfer",
+    "payment_mode": "online" | "cash",
+    "transfer_type": "atm_withdrawal" | "cash_deposit" | "to_savings" | null,
     "amount_paise": number,
     "category": string,
     "merchant": string | null,

@@ -1,7 +1,7 @@
 /**
  * Supabase Database Type Definitions
- * Includes core financial tables (categories, transactions, budgets)
- * and WhatsApp companion tables (user_settings, phone_verifications).
+ * Includes financial tables (accounts, categories, transactions, budgets)
+ * and companion tables (user_settings, phone_verifications).
  */
 
 export type Json =
@@ -13,12 +13,61 @@ export type Json =
   | Json[];
 
 export type CategoryKind = 'income' | 'expense';
-export type TransactionType = 'income' | 'expense';
+export type TransactionType = 'income' | 'expense' | 'transfer';
 export type TransactionSource = 'web' | 'whatsapp_text' | 'whatsapp_image';
+export type AccountType = 'bank' | 'cash' | 'wallet';
+export type AccountPurpose = 'spending' | 'savings';
 
 export interface Database {
   public: {
     Tables: {
+      accounts: {
+        Row: {
+          id: string;
+          user_id: string;
+          name: string;
+          type: AccountType;
+          purpose: AccountPurpose;
+          opening_balance_paise: number;
+          target_goal_paise: number | null;
+          is_default: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          name: string;
+          type?: AccountType;
+          purpose?: AccountPurpose;
+          opening_balance_paise?: number;
+          target_goal_paise?: number | null;
+          is_default?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          name?: string;
+          type?: AccountType;
+          purpose?: AccountPurpose;
+          opening_balance_paise?: number;
+          target_goal_paise?: number | null;
+          is_default?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'accounts_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: false;
+            referencedRelation: 'users';
+            referencedColumns: ['id'];
+          }
+        ];
+      };
       categories: {
         Row: {
           id: string;
@@ -63,6 +112,8 @@ export interface Database {
           user_id: string;
           type: TransactionType;
           amount_paise: number;
+          account_id: string | null;
+          transfer_to_account_id: string | null;
           category_id: string | null;
           note: string | null;
           merchant: string | null;
@@ -78,6 +129,8 @@ export interface Database {
           user_id: string;
           type: TransactionType;
           amount_paise: number;
+          account_id?: string | null;
+          transfer_to_account_id?: string | null;
           category_id?: string | null;
           note?: string | null;
           merchant?: string | null;
@@ -93,6 +146,8 @@ export interface Database {
           user_id?: string;
           type?: TransactionType;
           amount_paise?: number;
+          account_id?: string | null;
+          transfer_to_account_id?: string | null;
           category_id?: string | null;
           note?: string | null;
           merchant?: string | null;
@@ -110,6 +165,20 @@ export interface Database {
             isOneToOne: false;
             referencedRelation: 'categories';
             referencedColumns: ['user_id', 'id'];
+          },
+          {
+            foreignKeyName: 'fk_transactions_account';
+            columns: ['account_id'];
+            isOneToOne: false;
+            referencedRelation: 'accounts';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'fk_transactions_transfer_to_account';
+            columns: ['transfer_to_account_id'];
+            isOneToOne: false;
+            referencedRelation: 'accounts';
+            referencedColumns: ['id'];
           },
           {
             foreignKeyName: 'transactions_user_id_fkey';
@@ -147,18 +216,18 @@ export interface Database {
         };
         Relationships: [
           {
-            foreignKeyName: 'budgets_user_id_fkey';
-            columns: ['user_id'];
-            isOneToOne: false;
-            referencedRelation: 'users';
-            referencedColumns: ['id'];
-          },
-          {
             foreignKeyName: 'fk_budgets_category_composite';
             columns: ['user_id', 'category_id'];
             isOneToOne: false;
             referencedRelation: 'categories';
             referencedColumns: ['user_id', 'id'];
+          },
+          {
+            foreignKeyName: 'budgets_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: false;
+            referencedRelation: 'users';
+            referencedColumns: ['id'];
           }
         ];
       };
@@ -169,6 +238,7 @@ export interface Database {
           phone_verified: boolean;
           monthly_budget_paise: number | null;
           starting_balance_paise: number;
+          savings_upi_id: string | null;
           currency: string;
           timezone: string;
           created_at: string;
@@ -180,6 +250,7 @@ export interface Database {
           phone_verified?: boolean;
           monthly_budget_paise?: number | null;
           starting_balance_paise?: number;
+          savings_upi_id?: string | null;
           currency?: string;
           timezone?: string;
           created_at?: string;
@@ -191,6 +262,7 @@ export interface Database {
           phone_verified?: boolean;
           monthly_budget_paise?: number | null;
           starting_balance_paise?: number;
+          savings_upi_id?: string | null;
           currency?: string;
           timezone?: string;
           created_at?: string;
@@ -258,6 +330,23 @@ export interface Database {
       [_ in never]: never;
     };
     Functions: {
+      get_account_balances: {
+        Args: { p_user_id?: string | null };
+        Returns: {
+          account_id: string;
+          account_name: string;
+          account_type: AccountType;
+          account_purpose: AccountPurpose;
+          is_default: boolean;
+          opening_balance_paise: number;
+          target_goal_paise: number | null;
+          current_balance_paise: number;
+          total_income_paise: number;
+          total_expense_paise: number;
+          transfers_in_paise: number;
+          transfers_out_paise: number;
+        }[];
+      };
       get_balance: {
         Args: Record<PropertyKey, never>;
         Returns: {

@@ -1,11 +1,17 @@
 /**
  * Meta WhatsApp Cloud API Client
- * Handles outbound messaging and downloading incoming media attachments (screenshots).
+ * Handles outbound messaging (text and interactive buttons) and downloading
+ * incoming media attachments (screenshots).
  */
 
 export interface WhatsAppClientConfig {
   accessToken?: string;
   phoneNumberId?: string;
+}
+
+export interface QuickReplyButton {
+  id: string;
+  title: string;
 }
 
 export class WhatsAppClient {
@@ -40,7 +46,6 @@ export class WhatsAppClient {
 
     // Meta API expects digits only without leading '+'
     const cleanTo = to.replace(/\D/g, '');
-
     const url = `https://graph.facebook.com/${this.apiVersion}/${this.phoneNumberId}/messages`;
 
     try {
@@ -80,6 +85,71 @@ export class WhatsAppClient {
   }
 
   /**
+   * Sends interactive quick reply buttons to a WhatsApp user.
+   * Falls back to plain text if interactive messages are rejected.
+   */
+  async sendQuickReplyButtons(
+    to: string,
+    bodyText: string,
+    buttons: QuickReplyButton[]
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    if (!this.accessToken || !this.phoneNumberId) {
+      console.warn('WhatsApp API credentials missing.');
+      return { success: false, error: 'Credentials not configured' };
+    }
+
+    const cleanTo = to.replace(/\D/g, '');
+    const url = `https://graph.facebook.com/${this.apiVersion}/${this.phoneNumberId}/messages`;
+
+    // Maximum 3 quick reply buttons allowed by WhatsApp Cloud API
+    const formattedButtons = buttons.slice(0, 3).map((b) => ({
+      type: 'reply',
+      reply: {
+        id: b.id.slice(0, 256),
+        title: b.title.slice(0, 20),
+      },
+    }));
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: cleanTo,
+          type: 'interactive',
+          interactive: {
+            type: 'button',
+            body: { text: bodyText },
+            action: { buttons: formattedButtons },
+          },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        // Fallback to text message with choices listed
+        const choices = buttons.map((b) => `• *${b.title}*`).join('\n');
+        return this.sendTextMessage(to, `${bodyText}\n\n${choices}`);
+      }
+
+      return {
+        success: true,
+        messageId: data.messages?.[0]?.id,
+      };
+    } catch (error) {
+      console.error('Error sending WhatsApp interactive buttons:', error);
+      const choices = buttons.map((b) => `• *${b.title}*`).join('\n');
+      return this.sendTextMessage(to, `${bodyText}\n\n${choices}`);
+    }
+  }
+
+  /**
    * Downloads a media attachment (e.g. payment screenshot) from Meta servers as base64.
    *
    * @param mediaId - The media ID received in the webhook payload.
@@ -90,7 +160,6 @@ export class WhatsAppClient {
     }
 
     try {
-      // Step 1: Retrieve media metadata and direct download URL
       const metaUrl = `https://graph.facebook.com/${this.apiVersion}/${mediaId}`;
       const metaRes = await fetch(metaUrl, {
         headers: {
@@ -112,7 +181,6 @@ export class WhatsAppClient {
         return null;
       }
 
-      // Step 2: Download the binary file using Bearer token with User-Agent
       const fileRes = await fetch(downloadUrl, {
         headers: {
           Authorization: `Bearer ${this.accessToken}`,

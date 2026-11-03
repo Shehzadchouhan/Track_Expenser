@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -12,9 +12,17 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  viewportFit: "cover",
+  themeColor: "#09090b",
+};
+
 export const metadata: Metadata = {
-  title: "Track Expenser - AI & WhatsApp Financial Cockpit",
-  description: "Real-time expense tracking, bank statement ingestion, and live balance fluctuations via WhatsApp & Web.",
+  title: "Track Expenser - Simple Daily Expense & Income Tracker",
+  description: "Real-time expense tracking, Online & Cash balance separation, and daily budget pacing.",
   icons: {
     icon: "/favicon.png",
     apple: "/favicon.png",

@@ -2,24 +2,22 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  Smartphone,
   ShieldCheck,
-  MessageCircle,
   LogIn,
   LogOut,
   User,
   ChevronDown,
   RotateCcw,
+  Mail,
+  Languages,
 } from 'lucide-react';
 import { Logo } from './Logo';
 import type { AppLanguage } from '@/lib/i18n';
-import { Languages } from 'lucide-react';
-import { getWhatsAppBusinessUrl } from '@/lib/whatsapp/link';
 
 interface NavbarProps {
-  isPhoneLinked: boolean;
-  phoneNumber?: string | null;
-  onOpenPhoneModal: () => void;
+  isAuthenticated: boolean;
+  userEmail?: string | null;
+  onOpenAuthModal: () => void;
   onSignOut: () => void;
   onOpenResetModal?: () => void;
   language: AppLanguage;
@@ -27,9 +25,9 @@ interface NavbarProps {
 }
 
 export function Navbar({
-  isPhoneLinked,
-  phoneNumber,
-  onOpenPhoneModal,
+  isAuthenticated,
+  userEmail,
+  onOpenAuthModal,
   onSignOut,
   onOpenResetModal,
   language,
@@ -37,6 +35,7 @@ export function Navbar({
 }: NavbarProps) {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const isHindi = language === 'hi';
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -49,9 +48,7 @@ export function Navbar({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // WhatsApp bot direct link
-  const botWhatsAppUrl = getWhatsAppBusinessUrl('Spent ');
-  const isHindi = language === 'hi';
+  const userDisplayName = userEmail || 'Account';
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-zinc-200 bg-white/80 backdrop-blur-md dark:border-zinc-800 dark:bg-zinc-950/80">
@@ -62,22 +59,7 @@ export function Navbar({
 
         {/* Status & Actions */}
         <div className="flex items-center gap-2.5">
-          {/* Quick One-Tap WhatsApp Bot Trigger */}
-          {botWhatsAppUrl && (
-            <a
-              href={botWhatsAppUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-500 hover:scale-[1.02] active:scale-95 sm:px-3.5"
-              title={isHindi ? 'खर्च जोड़ने के लिए WhatsApp खोलें' : 'Open WhatsApp to record an expense'}
-              aria-label={isHindi ? 'WhatsApp में खर्च दर्ज करें' : 'Open WhatsApp to record an expense'}
-            >
-              <MessageCircle className="h-3.5 w-3.5 fill-white text-emerald-600" />
-              <span className="hidden sm:inline">{isHindi ? 'WhatsApp पर खर्च जोड़ें' : 'Chat on WhatsApp'}</span>
-              <span className="sm:hidden">WhatsApp</span>
-            </a>
-          )}
-
+          {/* Language Switch */}
           <button
             type="button"
             onClick={() => onLanguageChange(isHindi ? 'en' : 'hi')}
@@ -101,8 +83,8 @@ export function Navbar({
             </button>
           )}
 
-          {/* Phone Link / User Account Menu */}
-          {isPhoneLinked ? (
+          {/* User Account Menu / Sign In */}
+          {isAuthenticated ? (
             <div className="relative" ref={dropdownRef}>
               <button
                 onClick={() => setIsDropdownOpen((prev) => !prev)}
@@ -112,20 +94,22 @@ export function Navbar({
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
                 </span>
-                <Smartphone className="h-3.5 w-3.5" />
-                <span className="hidden font-semibold sm:inline">{phoneNumber}</span>
+                <Mail className="h-3.5 w-3.5" />
+                <span className="max-w-[120px] truncate font-semibold sm:max-w-[180px]">
+                  {userDisplayName}
+                </span>
                 <ChevronDown className="hidden h-3 w-3 opacity-60 sm:block" />
               </button>
 
               {/* Dropdown Menu */}
               {isDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-56 rounded-2xl border border-zinc-200 bg-white p-2 shadow-xl dark:border-zinc-800 dark:bg-zinc-900 z-50">
+                <div className="absolute right-0 mt-2 w-60 rounded-2xl border border-zinc-200 bg-white p-2 shadow-xl dark:border-zinc-800 dark:bg-zinc-900 z-50">
                   <div className="border-b border-zinc-100 px-3 py-2 text-xs dark:border-zinc-800">
                     <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-400">
                       {isHindi ? 'चालू खाता' : 'Active Account'}
                     </span>
-                    <p className="font-semibold text-zinc-800 dark:text-zinc-200">
-                      {phoneNumber}
+                    <p className="truncate font-semibold text-zinc-800 dark:text-zinc-200">
+                      {userDisplayName}
                     </p>
                   </div>
 
@@ -133,12 +117,12 @@ export function Navbar({
                     <button
                       onClick={() => {
                         setIsDropdownOpen(false);
-                        onOpenPhoneModal();
+                        onOpenAuthModal();
                       }}
                       className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
                     >
                       <User className="h-3.5 w-3.5 text-zinc-500" />
-                      <span>{isHindi ? 'खाता बदलें / साइन इन' : 'Switch Account / Sign In'}</span>
+                      <span>{isHindi ? 'खाता बदलें' : 'Switch Account'}</span>
                     </button>
 
                     {onOpenResetModal && (
@@ -170,7 +154,7 @@ export function Navbar({
             </div>
           ) : (
             <button
-              onClick={onOpenPhoneModal}
+              onClick={onOpenAuthModal}
               className="flex items-center gap-1.5 rounded-full bg-zinc-900 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
             >
               <LogIn className="h-3.5 w-3.5" />
@@ -180,7 +164,7 @@ export function Navbar({
 
           <div className="hidden lg:flex items-center gap-1.5 rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1 text-xs text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
             <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
-            <span>{isHindi ? 'AI सुविधा' : 'AI tools'}</span>
+            <span>{isHindi ? 'सुरक्षित और निजी' : 'Private & Secure'}</span>
           </div>
         </div>
       </div>

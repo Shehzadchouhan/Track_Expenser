@@ -8,7 +8,7 @@ import { getAuthenticatedUser } from '@/lib/supabase/auth';
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: vi.fn() }));
 vi.mock('@/lib/supabase/auth', () => ({ getAuthenticatedUser: vi.fn() }));
 
-describe('Dashboard DELETE API Route', () => {
+describe('Dashboard DELETE & Mutation API Routes', () => {
   const userId = 'd6dc1072-2b4d-49df-8b45-4ef98327cc73';
   const mockAdmin = { from: vi.fn() };
 
@@ -46,7 +46,6 @@ describe('Dashboard DELETE API Route', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone: '+919876543210',
           action: 'add_transaction',
           type: 'expense',
           amount_paise: 10000,
@@ -71,6 +70,17 @@ describe('Dashboard DELETE API Route', () => {
     mockAdmin.from.mockImplementation((table: string) => {
       if (table === 'categories') {
         return { select: vi.fn().mockReturnValue({ eq: findCategories }) };
+      }
+      if (table === 'accounts') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+              }),
+            }),
+          }),
+        };
       }
       return { insert };
     });
@@ -159,5 +169,63 @@ describe('Dashboard DELETE API Route', () => {
     expect(response.status).toBe(400);
     expect(data.error).toBe('Missing transaction ID or reset action.');
     expect(mockAdmin.from).not.toHaveBeenCalled();
+  });
+
+  it('handles account reconciliation by creating an adjustment transaction', async () => {
+    const accountId = 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d';
+    mockAdmin.from.mockImplementation((table: string) => {
+      if (table === 'accounts') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({
+                  data: { id: accountId, name: 'Cash', opening_balance_paise: 200000 },
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'transactions') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [{ type: 'expense', amount_paise: 50000, account_id: accountId }],
+              error: null,
+            }),
+          }),
+          insert: vi.fn().mockReturnValue({
+            select: vi.fn().mockReturnValue({
+              single: vi.fn().mockResolvedValue({
+                data: { id: 'adj-tx-id' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {};
+    });
+
+    // Opening 2,000 - expense 500 = 1,500. Actual = 2,500 (+1,000 difference)
+    const response = await POST(
+      new NextRequest('http://localhost:3000/api/dashboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'reconcile_account',
+          account_id: accountId,
+          actual_balance_paise: 250000,
+        }),
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.adjustedPaise).toBe(100000);
+    expect(data.newBalancePaise).toBe(250000);
   });
 });
