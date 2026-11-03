@@ -4,16 +4,17 @@ import React, { useState } from 'react';
 import {
   Landmark,
   Banknote,
-  Wallet,
   PiggyBank,
+  ShieldCheck,
   ArrowRightLeft,
   CheckCircle2,
   RefreshCw,
   AlertCircle,
   X,
+  Wallet,
 } from 'lucide-react';
 import { formatINR } from '@/lib/money';
-import type { AppLanguage } from '@/lib/i18n';
+import { accountLabel, type AppLanguage } from '@/lib/i18n';
 
 export interface DashboardAccount {
   id: string;
@@ -79,126 +80,182 @@ export function AccountCards({
     ? Number(actualRupeesInput || 0) - activeReconcileAccount.current_balance_paise / 100
     : 0;
 
-  return (
-    <>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {accounts.map((acc) => {
-          const isBank = acc.type === 'bank' && acc.purpose !== 'savings';
-          const isCash = acc.type === 'cash';
-          const isSavings = acc.purpose === 'savings';
+  // Separate accounts into Spending vs Savings Vaults
+  const spendingAccounts = accounts.filter((a) => a.purpose === 'spending');
+  const savingsVaults = accounts.filter((a) => a.purpose === 'savings');
 
-          return (
-            <div
-              key={acc.id}
-              className={`relative flex flex-col justify-between rounded-3xl border p-5 shadow-xs transition hover:shadow-md ${
-                isBank
-                  ? 'border-blue-100 bg-linear-to-b from-blue-50/40 to-white dark:border-blue-900/30 dark:from-blue-950/20 dark:to-zinc-900'
-                  : isCash
-                  ? 'border-amber-100 bg-linear-to-b from-amber-50/40 to-white dark:border-amber-900/30 dark:from-amber-950/20 dark:to-zinc-900'
-                  : 'border-emerald-100 bg-linear-to-b from-emerald-50/40 to-white dark:border-emerald-900/30 dark:from-emerald-950/20 dark:to-zinc-900'
-              }`}
-            >
-              <div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <div
-                      className={`flex h-10 w-10 items-center justify-center rounded-2xl ${
-                        isBank
-                          ? 'bg-blue-100 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400'
-                          : isCash
-                          ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400'
-                          : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400'
-                      }`}
-                    >
-                      {isBank ? (
-                        <Landmark className="h-5 w-5" />
-                      ) : isCash ? (
-                        <Banknote className="h-5 w-5" />
-                      ) : (
-                        <PiggyBank className="h-5 w-5" />
-                      )}
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-50">
-                        {isHindi
-                          ? isBank
-                            ? 'बैंक / UPI (ऑनलाइन)'
-                            : isCash
-                            ? 'नकद (हाथ में)'
-                            : 'बचत खाता (सुरक्षित)'
-                          : isBank
-                          ? 'Bank / UPI (Online)'
-                          : isCash
-                          ? 'Cash (In Hand)'
-                          : 'Savings Vault'}
-                      </h4>
-                      <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
-                        {isSavings
-                          ? isHindi ? 'दैनिक खर्च से अलग रखा पैसा' : 'Locked from daily budget'
-                          : isHindi ? 'दैनिक खर्च हेतु' : 'Daily spending balance'}
-                      </span>
-                    </div>
-                  </div>
+  const renderAccountCard = (acc: DashboardAccount) => {
+    const isOnlineSpending = acc.type === 'bank' && acc.purpose === 'spending';
+    const isCashSpending = acc.type === 'cash' && acc.purpose === 'spending';
+    const isOnlineVault = acc.purpose === 'savings' && (acc.type === 'bank' || acc.name.toLowerCase().includes('online'));
+    const isCashVault = acc.purpose === 'savings' && (acc.type === 'cash' || acc.name.toLowerCase().includes('cash'));
 
-                  {acc.is_default && (
-                    <span className="rounded-full bg-blue-100/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
-                      {isHindi ? 'मुख्य' : 'Default'}
-                    </span>
-                  )}
-                </div>
+    const cardTheme = isOnlineSpending
+      ? 'border-blue-100 bg-linear-to-b from-blue-50/40 to-white dark:border-blue-900/30 dark:from-blue-950/20 dark:to-zinc-900'
+      : isCashSpending
+      ? 'border-amber-100 bg-linear-to-b from-amber-50/40 to-white dark:border-amber-900/30 dark:from-amber-950/20 dark:to-zinc-900'
+      : isOnlineVault
+      ? 'border-indigo-100 bg-linear-to-b from-indigo-50/40 to-white dark:border-indigo-900/30 dark:from-indigo-950/20 dark:to-zinc-900'
+      : 'border-emerald-100 bg-linear-to-b from-emerald-50/40 to-white dark:border-emerald-900/30 dark:from-emerald-950/20 dark:to-zinc-900';
 
-                <div className="mt-4">
-                  <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
-                    {isHindi ? 'उपलब्ध शेष' : 'Current Balance'}
-                  </p>
-                  <p className="mt-1 text-2xl font-black text-zinc-900 dark:text-zinc-50">
-                    {formatINR(acc.current_balance_paise, { showPaise: false })}
-                  </p>
-                </div>
+    const iconTheme = isOnlineSpending
+      ? 'bg-blue-100 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400'
+      : isCashSpending
+      ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400'
+      : isOnlineVault
+      ? 'bg-indigo-100 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400'
+      : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400';
+
+    const titleText = isOnlineSpending
+      ? isHindi ? 'बैंक / UPI (ऑनलाइन)' : 'Bank / UPI (Online)'
+      : isCashSpending
+      ? isHindi ? 'नकद (हाथ में)' : 'Cash (In Hand)'
+      : isOnlineVault
+      ? isHindi ? 'ऑनलाइन वॉल्ट (बैंक बचत)' : 'Online Vault (Bank Savings)'
+      : isHindi ? 'कैश वॉल्ट (नकद गुल्लक)' : 'Cash Vault (Piggy Bank)';
+
+    const subtitleText = isOnlineSpending
+      ? isHindi ? 'GPay, PhonePe, कार्ड' : 'Daily UPI & Card spending'
+      : isCashSpending
+      ? isHindi ? 'बटुआ व जेब का नकद' : 'Physical cash in pocket'
+      : isOnlineVault
+      ? isHindi ? 'बैंक में सुरक्षित डिजिटल बचत' : 'Digital reserve locked from daily budget'
+      : isHindi ? 'घर / गुल्लक में रखी नकद बचत' : 'Physical cash reserve & piggy bank';
+
+    const tagText = isOnlineSpending
+      ? isHindi ? 'UPI / बैंक' : 'UPI/Online'
+      : isCashSpending
+      ? isHindi ? 'बटुआ/जेब' : 'Pocket Cash'
+      : isOnlineVault
+      ? isHindi ? 'बैंक बचत' : 'Online Saved'
+      : isHindi ? 'नकद बचत' : 'Cash Saved';
+
+    return (
+      <div
+        key={acc.id}
+        className={`relative flex flex-col justify-between rounded-3xl border p-5 shadow-xs transition hover:shadow-md ${cardTheme}`}
+      >
+        <div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className={`flex h-10 w-10 items-center justify-center rounded-2xl ${iconTheme}`}>
+                {isOnlineSpending ? (
+                  <Landmark className="h-5 w-5" />
+                ) : isCashSpending ? (
+                  <Banknote className="h-5 w-5" />
+                ) : isOnlineVault ? (
+                  <ShieldCheck className="h-5 w-5" />
+                ) : (
+                  <PiggyBank className="h-5 w-5" />
+                )}
               </div>
-
-              <div className="mt-4 flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800/80">
-                <div className="flex items-center gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => openReconcileModal(acc)}
-                    className={`inline-flex items-center gap-1.5 text-xs font-semibold transition ${
-                      isCash
-                        ? 'text-amber-700 hover:text-amber-800 dark:text-amber-400'
-                        : isBank
-                        ? 'text-blue-700 hover:text-blue-800 dark:text-blue-400'
-                        : 'text-emerald-700 hover:text-emerald-800 dark:text-emerald-400'
-                    }`}
-                  >
-                    <RefreshCw className="h-3.5 w-3.5" />
-                    <span>
-                      {isCash
-                        ? isHindi ? 'गिनती से मिलाएं' : 'Match Cash'
-                        : isHindi ? 'बैलेंस सेट करें' : 'Set Balance'}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => onOpenTransferModal && onOpenTransferModal()}
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
-                  >
-                    <ArrowRightLeft className="h-3 w-3" />
-                    <span>{isHindi ? '⇄ ट्रांसफर' : '⇄ Transfer'}</span>
-                  </button>
-                </div>
-
-                <span className="text-[10px] text-zinc-400">
-                  {isCash
-                    ? isHindi ? 'बटुआ/जेब' : 'In pocket'
-                    : isBank
-                    ? isHindi ? 'UPI / बैंक' : 'GPay/PhonePe'
-                    : isHindi ? 'बचत' : 'Savings'}
+              <div>
+                <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-50">
+                  {titleText}
+                </h4>
+                <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                  {subtitleText}
                 </span>
               </div>
             </div>
-          );
-        })}
+
+            {acc.is_default && (
+              <span className="rounded-full bg-blue-100/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
+                {isHindi ? 'मुख्य' : 'Default'}
+              </span>
+            )}
+          </div>
+
+          <div className="mt-4">
+            <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+              {acc.purpose === 'savings'
+                ? isHindi ? 'सुरक्षित बचत' : 'Locked Savings'
+                : isHindi ? 'उपलब्ध खर्च शेष' : 'Spending Balance'}
+            </p>
+            <p className="mt-1 text-2xl font-black text-zinc-900 dark:text-zinc-50">
+              {formatINR(acc.current_balance_paise, { showPaise: false })}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800/80">
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => openReconcileModal(acc)}
+              className={`inline-flex items-center gap-1.5 text-xs font-semibold transition ${
+                isCashSpending
+                  ? 'text-amber-700 hover:text-amber-800 dark:text-amber-400'
+                  : isOnlineSpending
+                  ? 'text-blue-700 hover:text-blue-800 dark:text-blue-400'
+                  : isOnlineVault
+                  ? 'text-indigo-700 hover:text-indigo-800 dark:text-indigo-400'
+                  : 'text-emerald-700 hover:text-emerald-800 dark:text-emerald-400'
+              }`}
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              <span>
+                {isCashSpending || isCashVault
+                  ? isHindi ? 'गिनती से मिलाएं' : 'Match Cash'
+                  : isHindi ? 'बैलेंस सेट करें' : 'Set Balance'}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onOpenTransferModal && onOpenTransferModal()}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
+            >
+              <ArrowRightLeft className="h-3 w-3" />
+              <span>{isHindi ? '⇄ ट्रांसफर' : '⇄ Transfer'}</span>
+            </button>
+          </div>
+
+          <span className="text-[10px] font-medium text-zinc-400">
+            {tagText}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* 1. Daily Spending Accounts (Online & Cash) */}
+      <div>
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+              {isHindi ? '💳 दैनिक खर्च खाते (Spending Accounts)' : '💳 Daily Spending Accounts'}
+            </h3>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              {isHindi ? 'ऑनलाइन (UPI) और नकद - रोज के खर्च के लिए' : 'Online (UPI) & Cash in pocket for daily expenses'}
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {spendingAccounts.map(renderAccountCard)}
+        </div>
+      </div>
+
+      {/* 2. The Two Savings Vaults (Online Vault & Cash Vault) */}
+      <div>
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
+              <span>🏦 {isHindi ? 'दो बचत वॉल्ट (Two Savings Vaults)' : 'Two Savings Vaults'}</span>
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+                {isHindi ? 'सुरक्षित पैसा' : 'Locked from daily budget'}
+              </span>
+            </h3>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              {isHindi ? 'ऑनलाइन बैंक बचत और नकद गुल्लक - दोनों अलग-अलग सुरक्षित' : 'Online Bank Vault & Cash Piggy Bank kept strictly separate'}
+            </p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {savingsVaults.map(renderAccountCard)}
+        </div>
       </div>
 
       {/* Reconcile Modal */}
@@ -218,7 +275,9 @@ export function AccountCards({
               </div>
               <div>
                 <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">
-                  {isHindi ? `${activeReconcileAccount.name} का बैलेंस मिलाएं` : `Reconcile ${activeReconcileAccount.name}`}
+                  {isHindi
+                    ? `${accountLabel(activeReconcileAccount.name, language)} का बैलेंस सेट करें`
+                    : `Set Balance: ${activeReconcileAccount.name}`}
                 </h3>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
                   {isHindi
@@ -238,7 +297,7 @@ export function AccountCards({
             <form onSubmit={handleReconcileSubmit} className="mt-5 space-y-4">
               <div className="rounded-2xl bg-zinc-50 p-3.5 dark:bg-zinc-800/50">
                 <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
-                  <span>{isHindi ? 'ऐप में दर्ज बैलेंस:' : 'Current Calculated Balance:'}</span>
+                  <span>{isHindi ? 'ऐप में दर्ज बैलेंस:' : 'Current Balance in App:'}</span>
                   <span className="font-bold text-zinc-900 dark:text-zinc-50">
                     {formatINR(activeReconcileAccount.current_balance_paise)}
                   </span>
@@ -286,10 +345,10 @@ export function AccountCards({
                     {calculatedDifferenceRupees > 0
                       ? isHindi
                         ? 'ऐप में यह राशि समायोजन कमाई के रूप में दर्ज होगी।'
-                        : 'A positive balance adjustment income record will be added.'
+                        : 'A balance adjustment income record will be added.'
                       : isHindi
                       ? 'ऐप में यह राशि समायोजन खर्च के रूप में दर्ज होगी।'
-                      : 'A negative balance adjustment expense record will be added.'}
+                      : 'A balance adjustment expense record will be added.'}
                   </p>
                 </div>
               )}
@@ -310,6 +369,6 @@ export function AccountCards({
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

@@ -21,7 +21,8 @@ export type AccountPurpose = (typeof ACCOUNT_PURPOSES)[number];
 export const DEFAULT_ACCOUNTS = [
   { name: 'Bank / UPI', type: 'bank' as const, purpose: 'spending' as const, opening_balance_paise: 0, target_goal_paise: null as number | null, is_default: true },
   { name: 'Cash', type: 'cash' as const, purpose: 'spending' as const, opening_balance_paise: 0, target_goal_paise: null as number | null, is_default: false },
-  { name: 'Savings Vault', type: 'bank' as const, purpose: 'savings' as const, opening_balance_paise: 0, target_goal_paise: 5000000 as number | null, is_default: false },
+  { name: 'Online Vault', type: 'bank' as const, purpose: 'savings' as const, opening_balance_paise: 0, target_goal_paise: null as number | null, is_default: false },
+  { name: 'Cash Vault', type: 'cash' as const, purpose: 'savings' as const, opening_balance_paise: 0, target_goal_paise: null as number | null, is_default: false },
 ];
 
 export const DEFAULT_CURRENCY = 'INR';

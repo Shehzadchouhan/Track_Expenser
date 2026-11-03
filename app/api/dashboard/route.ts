@@ -31,7 +31,7 @@ const DashboardMutationSchema = z.discriminatedUnion('action', [
     category_name: z.string().trim().min(1).max(40).optional(),
     merchant: z.string().trim().max(100).nullable().optional(),
     note: z.string().trim().max(280).nullable().optional(),
-    occurred_at: z.string().datetime().optional(),
+    occurred_at: z.string().optional(),
   }),
   z.object({
     action: z.literal('reconcile_account'),
@@ -162,13 +162,23 @@ export async function GET() {
         is_default: false,
       },
       {
-        id: 'default-savings',
+        id: 'default-online-vault',
         user_id: user.id,
-        name: 'Savings Vault',
+        name: 'Online Vault',
         type: 'bank' as const,
         purpose: 'savings' as const,
         opening_balance_paise: 0,
-        target_goal_paise: 5000000,
+        target_goal_paise: null,
+        is_default: false,
+      },
+      {
+        id: 'default-cash-vault',
+        user_id: user.id,
+        name: 'Cash Vault',
+        type: 'cash' as const,
+        purpose: 'savings' as const,
+        opening_balance_paise: 0,
+        target_goal_paise: null,
         is_default: false,
       },
     ];
@@ -271,8 +281,8 @@ export async function GET() {
       if (!targetAccId) {
         if (tx.merchant?.toLowerCase().includes('cash')) {
           targetAccId = 'default-cash';
-        } else if (tx.merchant?.toLowerCase().includes('savings')) {
-          targetAccId = 'default-savings';
+        } else if (tx.merchant?.toLowerCase().includes('vault') || tx.merchant?.toLowerCase().includes('savings')) {
+          targetAccId = 'default-online-vault';
         } else {
           targetAccId = 'default-bank';
         }
@@ -314,8 +324,8 @@ export async function GET() {
       if (!account) {
         if (transaction.merchant?.toLowerCase().includes('cash')) {
           account = accountMap.get('default-cash');
-        } else if (transaction.merchant?.toLowerCase().includes('savings')) {
-          account = accountMap.get('default-savings');
+        } else if (transaction.merchant?.toLowerCase().includes('vault') || transaction.merchant?.toLowerCase().includes('savings')) {
+          account = accountMap.get('default-online-vault') || accountMap.get('default-cash-vault') || accountMap.get('default-savings');
         } else {
           account = accountMap.get('default-bank');
         }
@@ -632,6 +642,14 @@ export async function POST(request: NextRequest) {
       categoryId = matchedCategory?.id ?? null;
     }
 
+    let occurredAtIso = new Date().toISOString();
+    if (mutation.occurred_at) {
+      const parsedDate = new Date(mutation.occurred_at);
+      if (!Number.isNaN(parsedDate.getTime())) {
+        occurredAtIso = parsedDate.toISOString();
+      }
+    }
+
     const txPayload: any = {
       user_id: user.id,
       type: mutation.type,
@@ -642,7 +660,7 @@ export async function POST(request: NextRequest) {
       merchant: mutation.merchant || null,
       note: mutation.note || null,
       source: 'web',
-      occurred_at: mutation.occurred_at ?? new Date().toISOString(),
+      occurred_at: occurredAtIso,
     };
 
     const { data: newTransaction, error: transactionError } = await safeInsertTransaction(admin, txPayload);

@@ -36,6 +36,10 @@ interface AddTransactionModalProps {
   onClose: () => void;
   initialType?: 'expense' | 'income' | 'transfer';
   initialAccountId?: string;
+  initialAmount?: string;
+  initialMerchant?: string;
+  initialCategory?: string;
+  initialNote?: string;
   accounts?: DashboardAccount[];
   isAuthenticated: boolean;
   language: AppLanguage;
@@ -84,6 +88,10 @@ export function AddTransactionModal({
   onClose,
   initialType = 'expense',
   initialAccountId,
+  initialAmount,
+  initialMerchant,
+  initialCategory,
+  initialNote,
   accounts = [],
   isAuthenticated,
   language,
@@ -97,18 +105,19 @@ export function AddTransactionModal({
   const [selectedAccountId, setSelectedAccountId] = useState<string>(
     initialAccountId || defaultBank?.id || ''
   );
-  const [amount, setAmount] = useState('');
+  const [amount, setAmount] = useState(initialAmount || '');
   const [category, setCategory] = useState(
-    initialType === 'income'
-      ? (initialAccountId === defaultCash?.id ? 'Cash Deposit' : 'Online Deposit')
-      : 'Food & Dining'
+    initialCategory ||
+      (initialType === 'income'
+        ? (initialAccountId === defaultCash?.id ? 'Cash Deposit' : 'Online Deposit')
+        : 'Food & Dining')
   );
 
   const [fromAccountId, setFromAccountId] = useState<string>(defaultBank?.id || '');
   const [toAccountId, setToAccountId] = useState<string>(defaultCash?.id || '');
 
-  const [merchant, setMerchant] = useState('');
-  const [note, setNote] = useState('');
+  const [merchant, setMerchant] = useState(initialMerchant || '');
+  const [note, setNote] = useState(initialNote || '');
   const [isListening, setIsListening] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -130,6 +139,13 @@ export function AddTransactionModal({
       setCategory(selectedAccountId === defaultCash?.id ? 'Cash Deposit' : 'Online Deposit');
     }
   }, [initialType, isHindi, selectedAccountId, defaultCash]);
+
+  useEffect(() => {
+    if (initialAmount) setAmount(initialAmount);
+    if (initialMerchant) setMerchant(initialMerchant);
+    if (initialCategory) setCategory(initialCategory);
+    if (initialNote) setNote(initialNote);
+  }, [initialAmount, initialMerchant, initialCategory, initialNote]);
 
   useEffect(() => {
     if (initialAccountId) {

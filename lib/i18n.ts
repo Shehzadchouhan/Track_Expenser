@@ -48,3 +48,19 @@ export function categoryLabel(category: string, language: AppLanguage): string {
 
   return hindiLabels[category] || category;
 }
+
+export function accountLabel(name: string, language: AppLanguage): string {
+  if (language === 'en') return name;
+
+  const hindiAccounts: Record<string, string> = {
+    'Bank / UPI': 'बैंक / UPI (ऑनलाइन)',
+    'Bank / UPI (Online)': 'बैंक / UPI (ऑनलाइन)',
+    Cash: 'नकद (हाथ में)',
+    'Cash (In Hand)': 'नकद (हाथ में)',
+    'Online Vault': 'ऑनलाइन वॉल्ट (बैंक बचत)',
+    'Cash Vault': 'कैश वॉल्ट (नकद गुल्लक)',
+    'Savings Vault': 'बचत वॉल्ट (सुरक्षित)',
+  };
+
+  return hindiAccounts[name] || name;
+}

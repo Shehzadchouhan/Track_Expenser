@@ -26,6 +26,9 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Sparkles,
+  Camera,
+  PiggyBank,
+  Share2,
 } from 'lucide-react';
 
 function isDisplayTransaction(value: unknown): value is DisplayTransaction {
@@ -68,8 +71,8 @@ export default function Home() {
       current_balance_paise: 0,
     },
     {
-      id: 'default-savings',
-      name: 'Savings Vault',
+      id: 'default-online-vault',
+      name: 'Online Vault',
       type: 'bank',
       purpose: 'savings',
       is_default: false,
@@ -77,10 +80,30 @@ export default function Home() {
       target_goal_paise: 5000000,
       current_balance_paise: 0,
     },
+    {
+      id: 'default-cash-vault',
+      name: 'Cash Vault',
+      type: 'cash',
+      purpose: 'savings',
+      is_default: false,
+      opening_balance_paise: 0,
+      target_goal_paise: 2000000,
+      current_balance_paise: 0,
+    },
   ]);
   const [savingsUpiId, setSavingsUpiId] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+
+  // Shared Receipt / Screenshot state (Web Share Target or Camera scan)
+  const [sharedReceiptData, setSharedReceiptData] = useState<{
+    amountRupees?: number;
+    merchant?: string;
+    category?: string;
+    note?: string;
+  } | null>(null);
+  const [isScanningReceipt, setIsScanningReceipt] = useState(false);
+  const receiptFileInputRef = React.useRef<HTMLInputElement>(null);
 
   const language = useSyncExternalStore(
     subscribeToLanguage,
@@ -132,6 +155,22 @@ export default function Home() {
         if (Array.isArray(data.transactions)) {
           setTransactions(data.transactions);
         }
+
+        // Cache to localStorage for instant mobile loading on future launches
+        try {
+          localStorage.setItem(
+            'track_expenser_cached_dashboard',
+            JSON.stringify({
+              authenticated: true,
+              email: data.email || null,
+              accounts: data.accounts,
+              transactions: data.transactions,
+              startingBalancePaise: data.startingBalancePaise,
+              monthlyBudgetPaise: data.monthlyBudgetPaise,
+            })
+          );
+        } catch {}
+
         return true;
       }
       setIsAuthenticated(false);
@@ -166,6 +205,7 @@ export default function Home() {
       } else if (_event === 'SIGNED_OUT') {
         setIsAuthenticated(false);
         setUserEmail(null);
+        localStorage.removeItem('track_expenser_cached_dashboard');
       }
     });
 
@@ -174,31 +214,41 @@ export default function Home() {
     };
   }, [loadDashboardData]);
 
-  // Restore the authenticated account first, then load browser-only guest data.
+  // Instantaneous Mobile Restore: synchronously load local cache first, then sync in background
   useEffect(() => {
-    let active = true;
-    const restore = async () => {
-      const hasAccount = await loadDashboardData();
-      if (!active || hasAccount) return;
+    // 1. Immediately read cached dashboard for 0ms mobile render
+    try {
+      const cached = localStorage.getItem('track_expenser_cached_dashboard');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed.authenticated) {
+          setIsAuthenticated(true);
+          if (parsed.email) setUserEmail(parsed.email);
+        }
+        if (Array.isArray(parsed.accounts) && parsed.accounts.length > 0) {
+          setAccounts(parsed.accounts);
+        }
+        if (Array.isArray(parsed.transactions) && parsed.transactions.every(isDisplayTransaction)) {
+          setTransactions(parsed.transactions);
+        }
+        if (typeof parsed.startingBalancePaise === 'number') {
+          setStartingBalanceRupees(parsed.startingBalancePaise / 100);
+        }
+        if (parsed.monthlyBudgetPaise) {
+          setMonthlyBudgetPaise(parsed.monthlyBudgetPaise);
+        }
+      }
+    } catch {}
 
-      localStorage.removeItem('track_expenser_phone');
+    // 2. Read local guest state (starting balance, cycle, local records)
+    try {
       const savedStartingBalance = localStorage.getItem('track_expenser_starting_balance');
       const savedCycle = localStorage.getItem('track_expenser_cycle');
       const parsedBalance = savedStartingBalance ? Number.parseFloat(savedStartingBalance) : 0;
       const validStartingBalance = Number.isFinite(parsedBalance) && parsedBalance >= 0 ? parsedBalance : 0;
-      setStartingBalanceRupees(validStartingBalance);
-
-      setAccounts((prev) =>
-        prev.map((acc) =>
-          acc.id === 'default-bank' || (acc.type === 'bank' && acc.is_default)
-            ? {
-                ...acc,
-                opening_balance_paise: Math.round(validStartingBalance * 100),
-                current_balance_paise: Math.round(validStartingBalance * 100),
-              }
-            : acc
-        )
-      );
+      if (validStartingBalance > 0) {
+        setStartingBalanceRupees(validStartingBalance);
+      }
 
       if (savedCycle && ['weekly', 'monthly', 'all'].includes(savedCycle)) {
         setTimeRange(savedCycle as 'weekly' | 'monthly' | 'all');
@@ -206,30 +256,63 @@ export default function Home() {
 
       const savedTransactions = localStorage.getItem('track_expenser_transactions');
       if (savedTransactions) {
-        try {
-          const parsedTransactions: unknown = JSON.parse(savedTransactions);
-          if (Array.isArray(parsedTransactions) && parsedTransactions.every(isDisplayTransaction)) {
-            setTransactions(parsedTransactions);
-          } else {
-            console.warn('[Dashboard] Saved local transactions are not a list.');
+        const parsed = JSON.parse(savedTransactions);
+        if (Array.isArray(parsed)) {
+          const validTx = parsed.filter(isDisplayTransaction);
+          if (validTx.length > 0) {
+            setTransactions((prev) => (prev.length === 0 ? validTx : prev));
           }
-        } catch (err) {
-          console.warn('[Dashboard] Could not restore saved local transactions:', err);
         }
       }
-    };
-    void restore();
-    return () => {
-      active = false;
-    };
+    } catch (err) {
+      console.warn('[Dashboard] Local storage restore error:', err);
+    }
+
+    // 3. Catch Web Share Target or UPI receipt redirect query params
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const sharedAmountPaise = params.get('shared_amount');
+      const openScanner = params.get('open_scanner');
+
+      if (sharedAmountPaise || openScanner) {
+        const paise = sharedAmountPaise ? Number(sharedAmountPaise) : undefined;
+        const rupees = paise && Number.isFinite(paise) && paise > 0 ? paise / 100 : undefined;
+        const merchant = params.get('shared_merchant') || undefined;
+        const category = params.get('shared_category') || undefined;
+        const note = params.get('shared_note') || undefined;
+        const type = params.get('shared_type');
+
+        if (type === 'income' || type === 'expense' || type === 'transfer') {
+          setNewTransactionType(type);
+        } else {
+          setNewTransactionType('expense');
+        }
+
+        setSharedReceiptData({
+          amountRupees: rupees,
+          merchant,
+          category,
+          note,
+        });
+        setIsAddModalOpen(true);
+
+        // Clean up URL so refresh doesn't reopen modal
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+    }
+
+    // 4. Background refresh with live Supabase data
+    void loadDashboardData();
   }, [loadDashboardData]);
 
-  // Periodic polling for new WhatsApp expenses (5s live pulse)
+  // Periodic polling when tab is active (15s live pulse)
   useEffect(() => {
     if (!isAuthenticated) return;
     const interval = setInterval(() => {
-      loadDashboardData();
-    }, 5000);
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        void loadDashboardData();
+      }
+    }, 15000);
     return () => clearInterval(interval);
   }, [isAuthenticated, loadDashboardData]);
 
@@ -287,26 +370,74 @@ export default function Home() {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
+  // Liquid / Spending balances
+  const onlineSpendingPaise = accounts
+    .filter((a) => a.purpose === 'spending' && (a.type === 'bank' || a.type === 'wallet'))
+    .reduce((sum, a) => sum + a.current_balance_paise, 0);
+
+  const cashSpendingPaise = accounts
+    .filter((a) => a.purpose === 'spending' && a.type === 'cash')
+    .reduce((sum, a) => sum + a.current_balance_paise, 0);
+
+  const totalSpendingBalancePaise = onlineSpendingPaise + cashSpendingPaise;
+
+  // Vault / Savings balances (2 Distinct Vaults: Online Vault & Cash Vault)
+  const onlineSavingsPaise = accounts
+    .filter((a) => a.purpose === 'savings' && (a.type === 'bank' || a.name.toLowerCase().includes('online')))
+    .reduce((sum, a) => sum + a.current_balance_paise, 0);
+
+  const cashSavingsPaise = accounts
+    .filter((a) => a.purpose === 'savings' && (a.type === 'cash' || a.name.toLowerCase().includes('cash')))
+    .reduce((sum, a) => sum + a.current_balance_paise, 0);
+
+  const totalSavingsBalancePaise = onlineSavingsPaise + cashSavingsPaise;
+
+  // Income Breakdown in cycle (Online vs Cash)
   const cycleIncomePaise = cycleTransactions
     .filter((t) => t.type === 'income')
     .reduce((sum, t) => sum + t.amount_paise, 0);
 
+  const cycleOnlineIncomePaise = cycleTransactions
+    .filter((t) => {
+      if (t.type !== 'income') return false;
+      const acc = accounts.find((a) => a.id === t.account_id);
+      return !acc || acc.type === 'bank' || acc.type === 'wallet';
+    })
+    .reduce((sum, t) => sum + t.amount_paise, 0);
+
+  const cycleCashIncomePaise = cycleTransactions
+    .filter((t) => {
+      if (t.type !== 'income') return false;
+      const acc = accounts.find((a) => a.id === t.account_id);
+      return acc?.type === 'cash';
+    })
+    .reduce((sum, t) => sum + t.amount_paise, 0);
+
+  // Spending Breakdown in cycle (Online vs Cash)
   const cycleSpentPaise = cycleTransactions
     .filter((t) => t.type === 'expense')
+    .reduce((sum, t) => sum + t.amount_paise, 0);
+
+  const cycleOnlineSpentPaise = cycleTransactions
+    .filter((t) => {
+      if (t.type !== 'expense') return false;
+      const acc = accounts.find((a) => a.id === t.account_id);
+      return !acc || acc.type === 'bank' || acc.type === 'wallet';
+    })
+    .reduce((sum, t) => sum + t.amount_paise, 0);
+
+  const cycleCashSpentPaise = cycleTransactions
+    .filter((t) => {
+      if (t.type !== 'expense') return false;
+      const acc = accounts.find((a) => a.id === t.account_id);
+      return acc?.type === 'cash';
+    })
     .reduce((sum, t) => sum + t.amount_paise, 0);
 
   const todayTransactions = transactions.filter(
     (t) => t.type === 'expense' && new Date(t.occurred_at) >= todayStart
   );
   const todaySpendPaise = todayTransactions.reduce((sum, t) => sum + t.amount_paise, 0);
-
-  const totalSpendingBalancePaise = accounts
-    .filter((a) => a.purpose === 'spending')
-    .reduce((sum, a) => sum + a.current_balance_paise, 0);
-
-  const totalSavingsBalancePaise = accounts
-    .filter((a) => a.purpose === 'savings')
-    .reduce((sum, a) => sum + a.current_balance_paise, 0);
 
   // Calculate Category Breakdown based on cycle expenses
   const categoryMap = new Map<string, CategorySpendItem>();
@@ -635,6 +766,52 @@ export default function Home() {
     }
   };
 
+  const handleReceiptScanClick = () => {
+    if (receiptFileInputRef.current) {
+      receiptFileInputRef.current.click();
+    }
+  };
+
+  const handleReceiptFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsScanningReceipt(true);
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+
+      const response = await fetch('/api/transactions/parse-image', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (response.ok) {
+        const json = await response.json();
+        const tx = json.transaction;
+        if (tx) {
+          setSharedReceiptData({
+            amountRupees: tx.amount_paise ? tx.amount_paise / 100 : undefined,
+            merchant: tx.merchant || undefined,
+            category: tx.category || undefined,
+            note: tx.note || undefined,
+          });
+          setNewTransactionType(tx.type === 'income' ? 'income' : 'expense');
+          setIsAddModalOpen(true);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('[Dashboard] Receipt scan error:', err);
+    } finally {
+      setIsScanningReceipt(false);
+      if (receiptFileInputRef.current) {
+        receiptFileInputRef.current.value = '';
+      }
+      setIsAddModalOpen(true);
+    }
+  };
+
   const handleAddTransaction = async (data: {
     type: 'expense' | 'income' | 'transfer';
     amountRupees: number;
@@ -667,48 +844,84 @@ export default function Home() {
       occurred_at: data.occurredAt ?? new Date().toISOString(),
     };
 
-    if (isAuthenticated) {
-      const res = await fetch('/api/dashboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'add_transaction',
-          type: data.type,
-          amount_paise,
-          account_id: data.accountId,
-          transfer_to_account_id: data.transferToAccountId,
-          category_name: data.category,
-          merchant: data.merchant,
-          note: data.note,
-          occurred_at: data.occurredAt,
-        }),
-      });
-      const resData = await res.json();
-      if (!res.ok || !resData.transaction?.id) {
-        throw new Error(resData.error || 'Could not save your record. Please try again.');
-      }
-      newTx.id = resData.transaction.id;
-      void loadDashboardData();
-    } else {
+    // 1. Optimistically append new transaction to state immediately
+    setTransactions((prev) => [newTx, ...prev]);
+
+    // 2. Optimistically update account balances in state immediately
+    const sourceAccId = data.accountId || fromAcc?.id;
+    setAccounts((prev) =>
+      prev.map((acc) => {
+        let bal = acc.current_balance_paise;
+        if (data.type === 'expense' && acc.id === sourceAccId) {
+          bal -= amount_paise;
+        } else if (data.type === 'income' && acc.id === sourceAccId) {
+          bal += amount_paise;
+        } else if (data.type === 'transfer') {
+          if (acc.id === sourceAccId) {
+            bal -= amount_paise;
+          } else if (acc.id === data.transferToAccountId) {
+            bal += amount_paise;
+          }
+        }
+        return { ...acc, current_balance_paise: bal };
+      })
+    );
+
+    // 3. Persist to local storage optimistically (never throws blocking errors to the user)
+    try {
       const savedTransactions = localStorage.getItem('track_expenser_transactions');
-      let parsedTransactions: unknown = [];
+      let parsedTransactions: DisplayTransaction[] = [];
       if (savedTransactions) {
         try {
-          parsedTransactions = JSON.parse(savedTransactions);
+          const parsed = JSON.parse(savedTransactions);
+          if (Array.isArray(parsed)) {
+            parsedTransactions = parsed.filter(isDisplayTransaction);
+          }
         } catch {
-          throw new Error('Could not read your saved records.');
+          // ignore parsing error
         }
-      }
-      if (!Array.isArray(parsedTransactions) || !parsedTransactions.every(isDisplayTransaction)) {
-        throw new Error('Could not read your saved records.');
       }
       localStorage.setItem(
         'track_expenser_transactions',
         JSON.stringify([newTx, ...parsedTransactions])
       );
+    } catch (err) {
+      console.warn('[Dashboard] Could not cache transaction locally:', err);
     }
 
-    setTransactions((prev) => [newTx, ...prev]);
+    // 4. Background server sync if authenticated (without blocking user on slow mobile networks)
+    if (isAuthenticated) {
+      try {
+        const res = await fetch('/api/dashboard', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'add_transaction',
+            type: data.type,
+            amount_paise,
+            account_id: data.accountId,
+            transfer_to_account_id: data.transferToAccountId,
+            category_name: data.category,
+            merchant: data.merchant,
+            note: data.note,
+            occurred_at: data.occurredAt,
+          }),
+        });
+        if (res.ok) {
+          const resData = await res.json();
+          if (resData.transaction?.id) {
+            setTransactions((prev) =>
+              prev.map((t) => (t.id === newTx.id ? { ...t, id: resData.transaction.id } : t))
+            );
+          }
+          void loadDashboardData();
+        } else {
+          console.warn('[Dashboard] Server rejected transaction sync:', res.status);
+        }
+      } catch (err) {
+        console.warn('[Dashboard] Network error during background transaction sync:', err);
+      }
+    }
   };
 
   const handleAuthSuccess = (email: string) => {
@@ -728,6 +941,8 @@ export default function Home() {
 
       localStorage.removeItem('track_expenser_phone');
       localStorage.removeItem('track_expenser_starting_balance');
+      localStorage.removeItem('track_expenser_cached_dashboard');
+      localStorage.removeItem('track_expenser_transactions');
       setIsAuthenticated(false);
       setUserEmail(null);
       setTransactions([]);
@@ -760,28 +975,39 @@ export default function Home() {
               <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
                 {isHindi ? 'उपलब्ध कुल खर्च राशि (Available Balance)' : 'Total Available Spending Balance'}
               </span>
-              <div className="mt-2 flex items-baseline gap-3">
+              <div className="mt-2 flex flex-wrap items-baseline gap-3">
                 <h1 className="text-3xl font-black tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-5xl">
                   {formatINR(totalSpendingBalancePaise, { showPaise: false })}
                 </h1>
                 {totalSavingsBalancePaise > 0 && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                    <span>+ {formatINR(totalSavingsBalancePaise, { showPaise: false })} {isHindi ? 'बचत' : 'saved'}</span>
+                    <span>+ {formatINR(totalSavingsBalancePaise, { showPaise: false })} {isHindi ? 'बचत (2 वॉल्ट्स)' : 'in 2 vaults'}</span>
                   </span>
                 )}
               </div>
-              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50/80 px-3 py-1 text-xs font-semibold text-blue-800 dark:border-blue-900/50 dark:bg-blue-950/40 dark:text-blue-300">
+                  <span>💳 {isHindi ? 'ऑनलाइन (UPI):' : 'Online (UPI):'}</span>
+                  <strong className="font-bold">{formatINR(onlineSpendingPaise, { showPaise: false })}</strong>
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50/80 px-3 py-1 text-xs font-semibold text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">
+                  <span>💵 {isHindi ? 'नकद (जेब में):' : 'Cash (In Hand):'}</span>
+                  <strong className="font-bold">{formatINR(cashSpendingPaise, { showPaise: false })}</strong>
+                </span>
+              </div>
+              <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
                 {isHindi
-                  ? 'बैंक (UPI) और नकद का कुल जोड़। बिना किसी उलझन के रोज का सीधा हिसाब।'
-                  : 'Total liquid balance across your Bank (UPI) and Cash in hand.'}
+                  ? 'बैंक (UPI) और नकद का अलग-अलग व कुल जोड़। 2 सुरक्षित वॉल्ट्स के साथ।'
+                  : 'Total liquid balance across your Bank (UPI) and Cash in hand, with 2 savings vaults.'}
               </p>
             </div>
 
-            {/* 3 Primary Action Buttons */}
+            {/* 4 Primary Action Buttons */}
             <div className="grid grid-cols-2 gap-2.5 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
               <button
                 type="button"
                 onClick={() => {
+                  setSharedReceiptData(null);
                   setNewTransactionType('expense');
                   setIsAddModalOpen(true);
                 }}
@@ -793,6 +1019,7 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => {
+                  setSharedReceiptData(null);
                   setNewTransactionType('income');
                   setIsAddModalOpen(true);
                 }}
@@ -804,13 +1031,24 @@ export default function Home() {
               <button
                 type="button"
                 onClick={() => {
+                  setSharedReceiptData(null);
                   setNewTransactionType('transfer');
                   setIsAddModalOpen(true);
                 }}
-                className="col-span-2 inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-blue-200 bg-blue-50/70 px-4 py-3 text-sm font-bold text-blue-800 shadow-xs transition hover:bg-blue-100 active:scale-95 dark:border-blue-900/50 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60 sm:col-span-1 sm:px-5"
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-blue-200 bg-blue-50/70 px-4 py-3 text-sm font-bold text-blue-800 shadow-xs transition hover:bg-blue-100 active:scale-95 dark:border-blue-900/50 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60 sm:px-5"
               >
                 <ArrowRightLeft className="h-4 w-4" />
                 <span>{isHindi ? '⇄ ट्रांसफर / ATM' : '⇄ Transfer / ATM'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleReceiptScanClick}
+                disabled={isScanningReceipt}
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm font-bold text-emerald-800 shadow-xs transition hover:bg-emerald-100 active:scale-95 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300 sm:px-5"
+              >
+                <Camera className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                <span>{isScanningReceipt ? (isHindi ? 'पढ़ रहे हैं...' : 'Scanning...') : (isHindi ? '📷 रसीद स्कैन' : '📷 Scan Receipt')}</span>
               </button>
             </div>
           </div>
@@ -900,45 +1138,85 @@ export default function Home() {
             </div>
           </div>
 
-          {/* 3 Simple Snapshot Cards */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div className="rounded-3xl border border-emerald-100 bg-white p-5 shadow-xs dark:border-emerald-950/50 dark:bg-zinc-900">
-              <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-                <span>{isHindi ? 'कुल कमाई' : 'Total Income'}</span>
-                <ArrowUpRight className="h-4 w-4" />
+          {/* 4 Clean Snapshot Cards: Savings (2 Vaults), Income (Online & Cash), Spent (Online & Cash), and Spent Today */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {/* Card 1: Total Savings (2 Vaults) */}
+            <div className="flex flex-col justify-between rounded-3xl border border-indigo-100 bg-white p-5 shadow-xs dark:border-indigo-950/50 dark:bg-zinc-900">
+              <div>
+                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400">
+                  <span>{isHindi ? 'कुल बचत (2 वॉल्ट्स)' : 'Total Savings (2 Vaults)'}</span>
+                  <PiggyBank className="h-4 w-4" />
+                </div>
+                <p className="mt-2 text-2xl font-black text-indigo-600 dark:text-indigo-400">
+                  {formatINR(totalSavingsBalancePaise, { showPaise: false })}
+                </p>
               </div>
-              <p className="mt-2 text-2xl font-black text-emerald-600 dark:text-emerald-400">
-                {formatINR(cycleIncomePaise, { showPaise: false })}
-              </p>
-              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                {isHindi ? 'इस अवधि में जमा हुई राशि' : 'Money earned in this period'}
-              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2.5 text-[11px] dark:border-zinc-800">
+                <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 font-medium text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300">
+                  🏦 {isHindi ? 'ऑनलाइन:' : 'Online:'} {formatINR(onlineSavingsPaise, { showPaise: false })}
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                  🪙 {isHindi ? 'कैश गुल्लक:' : 'Cash:'} {formatINR(cashSavingsPaise, { showPaise: false })}
+                </span>
+              </div>
             </div>
 
-            <div className="rounded-3xl border border-rose-100 bg-white p-5 shadow-xs dark:border-rose-950/50 dark:bg-zinc-900">
-              <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400">
-                <span>{isHindi ? 'कुल खर्च' : 'Total Spent'}</span>
-                <ArrowDownRight className="h-4 w-4" />
+            {/* Card 2: Total Income (Online & Cash) */}
+            <div className="flex flex-col justify-between rounded-3xl border border-emerald-100 bg-white p-5 shadow-xs dark:border-emerald-950/50 dark:bg-zinc-900">
+              <div>
+                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                  <span>{isHindi ? 'कुल कमाई' : 'Total Income'}</span>
+                  <ArrowUpRight className="h-4 w-4" />
+                </div>
+                <p className="mt-2 text-2xl font-black text-emerald-600 dark:text-emerald-400">
+                  {formatINR(cycleIncomePaise, { showPaise: false })}
+                </p>
               </div>
-              <p className="mt-2 text-2xl font-black text-rose-600 dark:text-rose-400">
-                {formatINR(cycleSpentPaise, { showPaise: false })}
-              </p>
-              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                {isHindi ? 'बैंक और नकद से किया गया खर्च' : 'Spent across Bank & Cash'}
-              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2.5 text-[11px] dark:border-zinc-800">
+                <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                  💳 {isHindi ? 'ऑनलाइन:' : 'Online:'} {formatINR(cycleOnlineIncomePaise, { showPaise: false })}
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                  💵 {isHindi ? 'नकद:' : 'Cash:'} {formatINR(cycleCashIncomePaise, { showPaise: false })}
+                </span>
+              </div>
             </div>
 
-            <div className="rounded-3xl border border-blue-100 bg-white p-5 shadow-xs dark:border-blue-950/50 dark:bg-zinc-900">
-              <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">
-                <span>{isHindi ? 'आज का खर्च' : 'Spent Today'}</span>
-                <span className="text-[11px] font-semibold text-zinc-400">{todayTransactions.length} {isHindi ? 'खर्च' : 'records'}</span>
+            {/* Card 3: Total Spent (Online & Cash) */}
+            <div className="flex flex-col justify-between rounded-3xl border border-rose-100 bg-white p-5 shadow-xs dark:border-rose-950/50 dark:bg-zinc-900">
+              <div>
+                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400">
+                  <span>{isHindi ? 'कुल खर्च' : 'Total Spent'}</span>
+                  <ArrowDownRight className="h-4 w-4" />
+                </div>
+                <p className="mt-2 text-2xl font-black text-rose-600 dark:text-rose-400">
+                  {formatINR(cycleSpentPaise, { showPaise: false })}
+                </p>
               </div>
-              <p className="mt-2 text-2xl font-black text-zinc-900 dark:text-zinc-50">
-                {formatINR(todaySpendPaise, { showPaise: false })}
-              </p>
-              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2.5 text-[11px] dark:border-zinc-800">
+                <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                  💳 {isHindi ? 'ऑनलाइन:' : 'Online:'} {formatINR(cycleOnlineSpentPaise, { showPaise: false })}
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                  💵 {isHindi ? 'नकद:' : 'Cash:'} {formatINR(cycleCashSpentPaise, { showPaise: false })}
+                </span>
+              </div>
+            </div>
+
+            {/* Card 4: Spent Today */}
+            <div className="flex flex-col justify-between rounded-3xl border border-blue-100 bg-white p-5 shadow-xs dark:border-blue-950/50 dark:bg-zinc-900">
+              <div>
+                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">
+                  <span>{isHindi ? 'आज का खर्च' : 'Spent Today'}</span>
+                  <span className="text-[11px] font-semibold text-zinc-400">{todayTransactions.length} {isHindi ? 'खर्च' : 'records'}</span>
+                </div>
+                <p className="mt-2 text-2xl font-black text-zinc-900 dark:text-zinc-50">
+                  {formatINR(todaySpendPaise, { showPaise: false })}
+                </p>
+              </div>
+              <div className="mt-3 border-t border-zinc-100 pt-2.5 text-[11px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
                 {isHindi ? 'आज का कुल खर्च' : 'Money spent today'}
-              </p>
+              </div>
             </div>
           </div>
         </section>
@@ -1072,12 +1350,29 @@ export default function Home() {
         language={language}
       />
 
+      {/* Hidden file input for direct receipt / UPI screenshot scanning */}
+      <input
+        type="file"
+        ref={receiptFileInputRef}
+        onChange={handleReceiptFileChange}
+        accept="image/*"
+        className="hidden"
+        aria-hidden="true"
+      />
+
       {/* Manual Add Transaction / Transfer Modal */}
       <AddTransactionModal
-        key={`${newTransactionType}-${accounts.length}`}
+        key={`${newTransactionType}-${accounts.length}-${sharedReceiptData ? 'shared' : 'normal'}`}
         isOpen={isAddModalOpen}
-        onClose={() => setIsAddModalOpen(false)}
+        onClose={() => {
+          setIsAddModalOpen(false);
+          setSharedReceiptData(null);
+        }}
         initialType={newTransactionType}
+        initialAmount={sharedReceiptData?.amountRupees ? String(sharedReceiptData.amountRupees) : undefined}
+        initialMerchant={sharedReceiptData?.merchant}
+        initialCategory={sharedReceiptData?.category}
+        initialNote={sharedReceiptData?.note}
         accounts={accounts}
         isAuthenticated={isAuthenticated}
         onSubmit={handleAddTransaction}
