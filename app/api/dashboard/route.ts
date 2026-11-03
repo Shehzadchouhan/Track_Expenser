@@ -347,7 +347,9 @@ export async function GET() {
       authenticated: true,
       linked: isLinked,
       phone: activeSettings?.phone_number ?? null,
-      email: user.email ?? null,
+      email: user.email?.endsWith('@phone.trackexpenser.app')
+        ? user.email.replace('@phone.trackexpenser.app', '')
+        : (user.email ?? null),
       monthlyBudgetPaise: activeSettings?.monthly_budget_paise ?? 2500000,
       startingBalancePaise: activeSettings?.starting_balance_paise ?? 0,
       savingsUpiId: activeSettings?.savings_upi_id ?? null,

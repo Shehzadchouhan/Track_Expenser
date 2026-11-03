@@ -71,7 +71,7 @@ describe('POST /api/auth/login', () => {
     });
   });
 
-  it('handles sign in with valid credentials', async () => {
+  it('handles sign in with valid email credentials', async () => {
     signInWithPassword.mockResolvedValue({
       data: { user: { id: 'user-123', email: 'test@example.com' } },
       error: null,
@@ -95,6 +95,34 @@ describe('POST /api/auth/login', () => {
     expect(data.user.email).toBe('test@example.com');
   });
 
+  it('handles sign in with 10-digit mobile number', async () => {
+    signInWithPassword.mockResolvedValue({
+      data: { user: { id: 'user-phone', email: '9876543210@phone.trackexpenser.app' } },
+      error: null,
+    });
+
+    const request = new NextRequest('http://localhost:3000/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'sign_in',
+        identifier: '9876543210',
+        password: 'securephonepass',
+      }),
+    });
+
+    const response = await loginRoute(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.email).toBe('9876543210');
+    expect(signInWithPassword).toHaveBeenCalledWith({
+      email: '9876543210@phone.trackexpenser.app',
+      password: 'securephonepass',
+    });
+  });
+
   it('returns 401 when sign in fails', async () => {
     signInWithPassword.mockResolvedValue({
       data: { user: null },
@@ -115,7 +143,7 @@ describe('POST /api/auth/login', () => {
     const data = await response.json();
 
     expect(response.status).toBe(401);
-    expect(data.error).toBe('Invalid login credentials');
+    expect(data.error).toContain('Incorrect email or password');
   });
 
   it('auto-confirms email and signs in on sign_up', async () => {
@@ -151,6 +179,43 @@ describe('POST /api/auth/login', () => {
     expect(signInWithPassword).toHaveBeenCalledWith({
       email: 'new@example.com',
       password: 'securepassword123',
+    });
+  });
+
+  it('auto-confirms phone number and signs in on sign_up', async () => {
+    createUser.mockResolvedValue({
+      data: { user: { id: 'phone-user', email: '9876543210@phone.trackexpenser.app' } },
+      error: null,
+    });
+    signInWithPassword.mockResolvedValue({
+      data: { user: { id: 'phone-user', email: '9876543210@phone.trackexpenser.app' } },
+      error: null,
+    });
+
+    const request = new NextRequest('http://localhost:3000/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'sign_up',
+        identifier: '+91 98765 43210',
+        password: 'myphonepass123',
+      }),
+    });
+
+    const response = await loginRoute(request);
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.email).toBe('9876543210');
+    expect(createUser).toHaveBeenCalledWith({
+      email: '9876543210@phone.trackexpenser.app',
+      password: 'myphonepass123',
+      email_confirm: true,
+      user_metadata: {
+        display_name: '9876543210',
+        phone: '9876543210',
+      },
     });
   });
 });
