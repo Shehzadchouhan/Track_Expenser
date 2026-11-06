@@ -8,6 +8,11 @@ import { CategoryBreakdown, CategorySpendItem } from '@/components/CategoryBreak
 import { AddTransactionModal } from '@/components/AddTransactionModal';
 import { ResetModal, ResetScope } from '@/components/ResetModal';
 import { AuthModal } from '@/components/AuthModal';
+import { SafeToSpendCard } from '@/components/SafeToSpendCard';
+import { SavingsVaultCard } from '@/components/SavingsVaultCard';
+import { SpendingTrendChart } from '@/components/SpendingTrendChart';
+import { WhatsAppLinkCard } from '@/components/WhatsAppLinkCard';
+import { calculateDailyBudgetPulse } from '@/lib/budget';
 import { DEFAULT_CATEGORIES } from '@/lib/constants';
 import { formatINR } from '@/lib/money';
 import { createClient as createBrowserSupabaseClient } from '@/lib/supabase/client';
@@ -29,6 +34,18 @@ import {
   Camera,
   Coins,
   WalletCards,
+  LayoutDashboard,
+  ShieldCheck,
+  ReceiptText,
+  BarChart3,
+  Plus,
+  ChevronRight,
+  ChevronDown,
+  Clock,
+  Landmark,
+  Banknote,
+  Lock,
+  Wallet,
 } from 'lucide-react';
 
 function isDisplayTransaction(value: unknown): value is DisplayTransaction {
@@ -114,6 +131,12 @@ export default function Home() {
 
   // Time Horizon Cycle Filter: 'weekly' | 'monthly' | 'all'
   const [timeRange, setTimeRange] = useState<'weekly' | 'monthly' | 'all'>('monthly');
+
+  // Navigation & UI States
+  const [activeTab, setActiveTab] = useState<'overview' | 'vaults' | 'transactions' | 'insights'>('overview');
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [linkedPhone, setLinkedPhone] = useState<string | null>(null);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -216,6 +239,7 @@ export default function Home() {
       return false;
     } finally {
       isFetchingRef.current = false;
+      setIsInitialLoading(false);
     }
   }, []);
 
@@ -280,6 +304,7 @@ export default function Home() {
         if (parsed.monthlyBudgetPaise) {
           setMonthlyBudgetPaise(parsed.monthlyBudgetPaise);
         }
+        setIsInitialLoading(false);
       }
     } catch {}
 
@@ -320,6 +345,11 @@ export default function Home() {
       const savedCycle = localStorage.getItem('track_expenser_cycle');
       if (savedCycle && ['weekly', 'monthly', 'all'].includes(savedCycle)) {
         setTimeRange(savedCycle as 'weekly' | 'monthly' | 'all');
+      }
+
+      const savedPhone = localStorage.getItem('track_expenser_phone');
+      if (savedPhone) {
+        setLinkedPhone(savedPhone);
       }
     } catch (err) {
       console.warn('[Dashboard] Local storage restore error:', err);
@@ -500,6 +530,17 @@ export default function Home() {
     (t) => t.type === 'expense' && new Date(t.occurred_at) >= todayStart
   );
   const todaySpendPaise = todayTransactions.reduce((sum, t) => sum + t.amount_paise, 0);
+
+  const budgetPulse = useMemo(() => {
+    return calculateDailyBudgetPulse({
+      monthlyBudgetPaise,
+      monthSpentPaise: cycleSpentPaise,
+      spentTodayPaise: todaySpendPaise,
+    });
+  }, [monthlyBudgetPaise, cycleSpentPaise, todaySpendPaise]);
+
+  const spendingAccounts = useMemo(() => accounts.filter((a) => a.purpose === 'spending'), [accounts]);
+  const savingsAccounts = useMemo(() => accounts.filter((a) => a.purpose === 'savings'), [accounts]);
 
   // Calculate Category Breakdown based on cycle expenses
   const categoryMap = new Map<string, CategorySpendItem>();
@@ -1146,371 +1187,861 @@ export default function Home() {
       />
 
       {/* Main Container */}
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
-        {/* Top Hero Section: Total Balance & Quick Actions */}
-        <section className="relative overflow-hidden rounded-3xl border border-zinc-200 bg-linear-to-b from-white to-zinc-50/50 p-6 shadow-xs dark:border-zinc-800 dark:from-zinc-900 dark:to-zinc-950 sm:p-8">
-          <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-                {isHindi ? 'उपलब्ध कुल खर्च राशि (Available Balance)' : 'Total Available Spending Balance'}
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6 pb-28 sm:pb-12">
+        {/* Desktop Segmented Tab Switcher */}
+        <div className="hidden sm:flex items-center justify-between border-b border-zinc-200/80 pb-4 dark:border-zinc-800/80">
+          <div className="flex items-center gap-1.5 rounded-2xl bg-zinc-100 p-1.5 dark:bg-zinc-900 border border-zinc-200/60 dark:border-zinc-800">
+            <button
+              type="button"
+              onClick={() => setActiveTab('overview')}
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+                activeTab === 'overview'
+                  ? 'bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-white'
+                  : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white'
+              }`}
+            >
+              <LayoutDashboard className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+              <span>{isHindi ? 'डैशबोर्ड' : 'Overview'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('vaults')}
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+                activeTab === 'vaults'
+                  ? 'bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-white'
+                  : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white'
+              }`}
+            >
+              <ShieldCheck className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+              <span>{isHindi ? 'खाते व तिजोरी' : 'Accounts & Vaults'}</span>
+              {totalSavingsBalancePaise > 0 && (
+                <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+                  ₹{(totalSavingsBalancePaise / 100).toLocaleString('en-IN')}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('transactions')}
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+                activeTab === 'transactions'
+                  ? 'bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-white'
+                  : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white'
+              }`}
+            >
+              <ReceiptText className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              <span>{isHindi ? 'लेन-देन इतिहास' : 'Transactions'}</span>
+              <span className="rounded-full bg-zinc-200/70 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-700 dark:bg-zinc-700 dark:text-zinc-300">
+                {cycleTransactions.length}
               </span>
-              <div className="mt-2 flex flex-wrap items-baseline gap-3">
-                <h1 className="text-3xl font-black tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-5xl">
-                  {formatINR(totalSpendingBalancePaise, { showPaise: false })}
-                </h1>
-                {totalSavingsBalancePaise > 0 && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                    <span>+ {formatINR(totalSavingsBalancePaise, { showPaise: false })} {isHindi ? 'बचत (2 वॉल्ट्स)' : 'in 2 vaults'}</span>
-                  </span>
-                )}
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50/80 px-3 py-1 text-xs font-semibold text-blue-800 dark:border-blue-900/50 dark:bg-blue-950/40 dark:text-blue-300">
-                  <span>💳 {isHindi ? 'ऑनलाइन (UPI):' : 'Online (UPI):'}</span>
-                  <strong className="font-bold">{formatINR(onlineSpendingPaise, { showPaise: false })}</strong>
-                </span>
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50/80 px-3 py-1 text-xs font-semibold text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">
-                  <span>💵 {isHindi ? 'नकद (जेब में):' : 'Cash (In Hand):'}</span>
-                  <strong className="font-bold">{formatINR(cashSpendingPaise, { showPaise: false })}</strong>
-                </span>
-              </div>
-              <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                {isHindi
-                  ? 'बैंक (UPI) और नकद का अलग-अलग व कुल जोड़। 2 सुरक्षित वॉल्ट्स के साथ।'
-                  : 'Total liquid balance across your Bank (UPI) and Cash in hand, with 2 savings vaults.'}
-              </p>
-            </div>
+            </button>
 
-            {/* 4 Primary Action Buttons */}
-            <div className="grid grid-cols-2 gap-2.5 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
+            <button
+              type="button"
+              onClick={() => setActiveTab('insights')}
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+                activeTab === 'insights'
+                  ? 'bg-white text-zinc-900 shadow-xs dark:bg-zinc-800 dark:text-white'
+                  : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white'
+              }`}
+            >
+              <BarChart3 className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+              <span>{isHindi ? 'खर्च विश्लेषण' : 'Analytics & Insights'}</span>
+            </button>
+          </div>
+
+          {/* Quick Cycle Switcher & Reset on Desktop */}
+          <div className="flex items-center gap-2">
+            <div className="flex items-center rounded-xl bg-zinc-100 p-1 dark:bg-zinc-900 border border-zinc-200/60 dark:border-zinc-800">
               <button
                 type="button"
-                onClick={() => {
-                  setSharedReceiptData(null);
-                  setNewTransactionType('expense');
-                  setIsAddModalOpen(true);
-                }}
-                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-zinc-900 px-4 py-3 text-sm font-bold text-white shadow-md transition hover:bg-zinc-800 active:scale-95 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-100 sm:px-6"
+                onClick={() => handleCycleChange('weekly')}
+                className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
+                  timeRange === 'weekly'
+                    ? 'bg-white text-zinc-900 shadow-2xs dark:bg-zinc-800 dark:text-white'
+                    : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400'
+                }`}
               >
-                <span>{isHindi ? '− खर्च जोड़ें' : '− Add Expense'}</span>
+                {isHindi ? 'सप्ताह' : 'Week'}
               </button>
-
               <button
                 type="button"
-                onClick={() => {
-                  setSharedReceiptData(null);
-                  setNewTransactionType('income');
-                  setIsAddModalOpen(true);
-                }}
-                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-zinc-300 bg-white px-4 py-3 text-sm font-bold text-zinc-900 shadow-xs transition hover:bg-zinc-50 active:scale-95 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 sm:px-5"
+                onClick={() => handleCycleChange('monthly')}
+                className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
+                  timeRange === 'monthly'
+                    ? 'bg-white text-zinc-900 shadow-2xs dark:bg-zinc-800 dark:text-white'
+                    : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400'
+                }`}
               >
-                <span>{isHindi ? '+ कमाई जोड़ें' : '+ Add Income'}</span>
+                {isHindi ? 'महीना' : 'Month'}
               </button>
-
               <button
                 type="button"
-                onClick={() => {
-                  setSharedReceiptData(null);
-                  setNewTransactionType('transfer');
-                  setIsAddModalOpen(true);
-                }}
-                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-blue-200 bg-blue-50/70 px-4 py-3 text-sm font-bold text-blue-800 shadow-xs transition hover:bg-blue-100 active:scale-95 dark:border-blue-900/50 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60 sm:px-5"
+                onClick={() => handleCycleChange('all')}
+                className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
+                  timeRange === 'all'
+                    ? 'bg-white text-zinc-900 shadow-2xs dark:bg-zinc-800 dark:text-white'
+                    : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400'
+                }`}
               >
-                <ArrowRightLeft className="h-4 w-4" />
-                <span>{isHindi ? '⇄ ट्रांसफर / ATM' : '⇄ Transfer / ATM'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleReceiptScanClick}
-                disabled={isScanningReceipt}
-                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm font-bold text-emerald-800 shadow-xs transition hover:bg-emerald-100 active:scale-95 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300 sm:px-5"
-              >
-                <Camera className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                <span>{isScanningReceipt ? (isHindi ? 'पढ़ रहे हैं...' : 'Scanning...') : (isHindi ? '📷 रसीद स्कैन' : '📷 Scan Receipt')}</span>
+                {isHindi ? 'सभी' : 'All'}
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() => setIsResetModalOpen(true)}
+              className="flex items-center gap-1 rounded-xl border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-600 shadow-2xs hover:bg-zinc-50 hover:text-rose-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:text-rose-400 transition"
+              title="Reset cycle"
+            >
+              <RotateCcw className="h-3 w-3" />
+              <span>{isHindi ? 'रीसेट' : 'Reset'}</span>
+            </button>
           </div>
-        </section>
+        </div>
 
-        {/* Account Cards: Bank, Cash (with Reconcile), and Savings */}
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-              {isHindi ? 'आपके खाते' : 'Your Accounts'}
-            </h2>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">
-              {isHindi ? 'पैसों की सही जगह' : 'Where your money lives'}
-            </span>
-          </div>
-
-          <AccountCards
-            accounts={accounts}
-            onReconcile={handleReconcileAccount}
-            onOpenTransferModal={() => {
-              setNewTransactionType('transfer');
-              setIsAddModalOpen(true);
-            }}
-            language={language}
-          />
-        </section>
-
-        {/* Period Selector & Summary Stats */}
-        <section className="space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-              <span className="hidden text-xs font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 sm:inline">
-                {isHindi ? 'समय:' : 'Period:'}
-              </span>
-              <div className="grid w-full grid-cols-3 gap-1 rounded-xl bg-zinc-200/60 p-0.5 dark:bg-zinc-800 sm:flex sm:w-auto sm:gap-0">
-                <button
-                  type="button"
-                  onClick={() => handleCycleChange('weekly')}
-                  className={`flex items-center justify-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition sm:px-3 ${
-                    timeRange === 'weekly'
-                      ? 'bg-white text-zinc-900 shadow-xs dark:bg-zinc-700 dark:text-zinc-100'
-                      : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200'
-                  }`}
-                >
-                  <Zap className="h-3 w-3 text-amber-500" />
-                  <span>{isHindi ? 'सप्ताह' : 'This Week'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleCycleChange('monthly')}
-                  className={`flex items-center justify-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition sm:px-3 ${
-                    timeRange === 'monthly'
-                      ? 'bg-white text-zinc-900 shadow-xs dark:bg-zinc-700 dark:text-zinc-100'
-                      : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200'
-                  }`}
-                >
-                  <Calendar className="h-3 w-3 text-emerald-500" />
-                  <span>{isHindi ? 'महीना' : 'This Month'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleCycleChange('all')}
-                  className={`flex items-center justify-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition sm:px-3 ${
-                    timeRange === 'all'
-                      ? 'bg-white text-zinc-900 shadow-xs dark:bg-zinc-700 dark:text-zinc-100'
-                      : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200'
-                  }`}
-                >
-                  <Layers className="h-3 w-3 text-cyan-500" />
-                  <span>{isHindi ? 'सभी' : 'All Time'}</span>
-                </button>
-              </div>
+        {/* Skeleton Screen when loading fresh without cache */}
+        {isInitialLoading && transactions.length === 0 && startingBalanceRupees === 0 ? (
+          <div className="space-y-6 animate-pulse">
+            <div className="h-44 w-full rounded-3xl bg-zinc-200/70 dark:bg-zinc-800/60" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="h-36 rounded-3xl bg-zinc-200/60 dark:bg-zinc-800/50" />
+              <div className="h-36 rounded-3xl bg-zinc-200/60 dark:bg-zinc-800/50" />
             </div>
-
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                {cycleRangeLabel}
-              </span>
-              <button
-                type="button"
-                onClick={() => setIsResetModalOpen(true)}
-                className="flex items-center gap-1 rounded-xl border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-600 shadow-2xs hover:bg-zinc-50 hover:text-rose-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400 dark:hover:text-rose-400"
-              >
-                <RotateCcw className="h-3 w-3" />
-                <span>{isHindi ? 'रीसेट' : 'Reset'}</span>
-              </button>
-            </div>
+            <div className="h-64 rounded-3xl bg-zinc-200/60 dark:bg-zinc-800/50" />
           </div>
+        ) : (
+          <>
+            {/* 1. OVERVIEW TAB */}
+            {activeTab === 'overview' && (
+              <div className="space-y-6 animate-fade-in">
+                {/* Hero Spending Balance & Quick Action Bar */}
+                <section className="relative overflow-hidden rounded-3xl border border-zinc-200/80 bg-linear-to-b from-white via-zinc-50/40 to-zinc-100/30 p-6 shadow-xs dark:border-zinc-800 dark:from-zinc-900 dark:via-zinc-900/90 dark:to-zinc-950 sm:p-8">
+                  {/* Subtle Background Glow */}
+                  <div className="pointer-events-none absolute -right-24 -top-24 h-56 w-56 rounded-full bg-emerald-500/10 blur-3xl" />
+                  <div className="pointer-events-none absolute -left-24 -bottom-24 h-56 w-56 rounded-full bg-blue-500/10 blur-3xl" />
 
-          {/* 4 Clean Snapshot Cards: Savings (2 Vaults), Income (Online & Cash), Spent (Online & Cash), and Spent Today */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {/* Card 1: Total Savings (2 Vaults) */}
-            <div className="flex flex-col justify-between rounded-3xl border border-indigo-100 bg-white p-5 shadow-xs dark:border-indigo-950/50 dark:bg-zinc-900">
-              <div>
-                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400">
-                  <span>{isHindi ? 'कुल बचत (2 वॉल्ट्स)' : 'Total Savings (2 Vaults)'}</span>
-                  <Coins className="h-4 w-4" />
+                  <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                        <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                          {isHindi ? 'उपलब्ध कुल खर्च राशि (Available Balance)' : 'Total Available Spending Balance'}
+                        </span>
+                      </div>
+
+                      <div className="mt-2 flex flex-wrap items-baseline gap-3">
+                        <h1 className="text-3xl font-black tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-5xl">
+                          {formatINR(totalSpendingBalancePaise, { showPaise: false })}
+                        </h1>
+                        {totalSavingsBalancePaise > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('vaults')}
+                            className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700 border border-indigo-200/60 transition hover:bg-indigo-100 dark:border-indigo-900/60 dark:bg-indigo-950/60 dark:text-indigo-300"
+                            title={isHindi ? 'वॉल्ट्स देखें' : 'View Vaults'}
+                          >
+                            <ShieldCheck className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+                            <span>+ {formatINR(totalSavingsBalancePaise, { showPaise: false })} {isHindi ? 'बचत (2 वॉल्ट)' : 'in 2 vaults'}</span>
+                            <ChevronRight className="h-3 w-3 opacity-70" />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="mt-3.5 flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200/80 bg-blue-50/80 px-3 py-1 text-xs font-semibold text-blue-800 dark:border-blue-900/50 dark:bg-blue-950/40 dark:text-blue-300">
+                          <span>💳 {isHindi ? 'ऑनलाइन (UPI):' : 'Online (UPI):'}</span>
+                          <strong className="font-bold">{formatINR(onlineSpendingPaise, { showPaise: false })}</strong>
+                        </span>
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200/80 bg-amber-50/80 px-3 py-1 text-xs font-semibold text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">
+                          <span>💵 {isHindi ? 'नकद (हाथ में):' : 'Cash (In Hand):'}</span>
+                          <strong className="font-bold">{formatINR(cashSpendingPaise, { showPaise: false })}</strong>
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                        {isHindi
+                          ? 'बैंक और नकद का लाइव खर्च जोड़। तिजोरी का पैसा अलग सुरक्षित रहता है।'
+                          : 'Live liquid cash across Bank (UPI) & Pocket Cash. Vault savings stay protected.'}
+                      </p>
+                    </div>
+
+                    {/* 4 Interactive Quick Action Buttons */}
+                    <div className="grid grid-cols-2 gap-2.5 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSharedReceiptData(null);
+                          setNewTransactionType('expense');
+                          setIsAddModalOpen(true);
+                        }}
+                        className="group inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-zinc-900 px-4 py-3 text-sm font-bold text-white shadow-md transition-all hover:bg-zinc-800 active:scale-95 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-100 sm:px-6"
+                      >
+                        <span className="text-rose-400 group-hover:scale-125 transition-transform font-bold">−</span>
+                        <span>{isHindi ? 'खर्च जोड़ें' : 'Add Expense'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSharedReceiptData(null);
+                          setNewTransactionType('income');
+                          setIsAddModalOpen(true);
+                        }}
+                        className="group inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-zinc-300 bg-white px-4 py-3 text-sm font-bold text-zinc-900 shadow-xs transition-all hover:bg-zinc-50 hover:border-emerald-400 active:scale-95 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 sm:px-5"
+                      >
+                        <span className="text-emerald-600 group-hover:scale-125 transition-transform font-bold">+</span>
+                        <span>{isHindi ? 'कमाई जोड़ें' : 'Add Income'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSharedReceiptData(null);
+                          setNewTransactionType('transfer');
+                          setIsAddModalOpen(true);
+                        }}
+                        className="group inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-blue-200 bg-blue-50/70 px-4 py-3 text-sm font-bold text-blue-800 shadow-xs transition-all hover:bg-blue-100 active:scale-95 dark:border-blue-900/50 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60 sm:px-5"
+                      >
+                        <ArrowRightLeft className="h-4 w-4 text-blue-600 group-hover:rotate-180 transition-transform duration-300" />
+                        <span>{isHindi ? 'ट्रांसफर / ATM' : 'Transfer / ATM'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleReceiptScanClick}
+                        disabled={isScanningReceipt}
+                        className="group inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm font-bold text-emerald-800 shadow-xs transition-all hover:bg-emerald-100 active:scale-95 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300 sm:px-5"
+                      >
+                        <Camera className="h-4 w-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
+                        <span>{isScanningReceipt ? (isHindi ? 'पढ़ रहे हैं...' : 'Scanning...') : (isHindi ? 'रसीद स्कैन' : 'Scan Receipt')}</span>
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Safe to Spend / Today's Pacing Card */}
+                <SafeToSpendCard
+                  pulse={budgetPulse}
+                  onUpdateBudget={handleUpdateBudget}
+                  language={language}
+                />
+
+                {/* Spending Accounts Section (Bank UPI & Cash in Hand) */}
+                <section className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                        {isHindi ? 'आपके खर्च खाते' : 'Your Spending Accounts'}
+                      </h2>
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                        {isHindi ? 'रोजमर्रा के UPI और नकद खर्च के लिए' : 'For everyday UPI and cash expenses'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('vaults')}
+                      className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
+                    >
+                      <Lock className="h-3 w-3" />
+                      <span>{isHindi ? '2 वॉल्ट्स खोलें →' : 'View 2 Vaults →'}</span>
+                    </button>
+                  </div>
+
+                  <AccountCards
+                    accounts={spendingAccounts}
+                    onReconcile={handleReconcileAccount}
+                    onOpenTransferModal={() => {
+                      setNewTransactionType('transfer');
+                      setIsAddModalOpen(true);
+                    }}
+                    language={language}
+                  />
+
+                  {/* Vaults Teaser / Direct Link Banner */}
+                  {totalSavingsBalancePaise > 0 ? (
+                    <div className="flex items-center justify-between rounded-2xl border border-indigo-100 bg-indigo-50/60 p-3.5 dark:border-indigo-900/40 dark:bg-indigo-950/20">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-xs">
+                          <Lock className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
+                            {isHindi ? '2 सुरक्षित वॉल्ट्स में बचत:' : 'Protected in 2 Savings Vaults:'}{' '}
+                            <span className="text-indigo-600 dark:text-indigo-400 font-black">{formatINR(totalSavingsBalancePaise, { showPaise: false })}</span>
+                          </p>
+                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                            {isHindi ? 'दैनिक बजट से सुरक्षित डिजिटल व नकद बचत' : 'Ring-fenced from daily spending in Online & Cash Vaults'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('vaults')}
+                        className="inline-flex items-center gap-1 text-xs font-bold text-indigo-700 hover:text-indigo-800 dark:text-indigo-400"
+                      >
+                        <span>{isHindi ? 'वॉल्ट देखें' : 'View Vaults'}</span>
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between rounded-2xl border border-dashed border-zinc-200 bg-zinc-50/60 p-3.5 dark:border-zinc-800 dark:bg-zinc-900/40">
+                      <div className="flex items-center gap-2.5">
+                        <ShieldCheck className="h-5 w-5 text-zinc-400" />
+                        <div>
+                          <p className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
+                            {isHindi ? 'अपनी बचत के लिए वॉल्ट बनाएं' : 'Ring-fence your savings with Vaults'}
+                          </p>
+                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                            {isHindi ? 'ऑनलाइन व नकद बचत अलग सुरक्षित रखें' : 'Keep digital & cash savings safe from impulsive spending'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('vaults')}
+                        className="text-xs font-bold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400"
+                      >
+                        {isHindi ? 'खोलें →' : 'Open Vaults →'}
+                      </button>
+                    </div>
+                  )}
+                </section>
+
+                {/* Recent Activity Card (Last 5 transactions) */}
+                <section className="rounded-3xl border border-zinc-200 bg-white p-5 shadow-xs dark:border-zinc-800 dark:bg-zinc-900 sm:p-6">
+                  <div className="flex items-center justify-between pb-3.5 border-b border-zinc-100 dark:border-zinc-800">
+                    <div className="flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                      <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                        {isHindi ? 'हाल ही के लेन-देन' : 'Recent Transactions'}
+                      </h3>
+                    </div>
+                    {cycleTransactions.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('transactions')}
+                        className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400"
+                      >
+                        <span>{isHindi ? 'सभी देखें' : 'View all'} ({cycleTransactions.length})</span>
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {cycleTransactions.length === 0 ? (
+                    <div className="py-12 text-center">
+                      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-400 dark:bg-zinc-800">
+                        <ReceiptText className="h-6 w-6" />
+                      </div>
+                      <p className="mt-3 text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+                        {isHindi ? 'कोई लेन-देन दर्ज नहीं है' : 'No transactions recorded yet'}
+                      </p>
+                      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        {isHindi ? 'खर्च, कमाई या ट्रांसफर जोड़ें या UPI रसीद स्कैन करें' : 'Add an expense, income, or scan a UPI receipt to get started'}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSharedReceiptData(null);
+                          setNewTransactionType('expense');
+                          setIsAddModalOpen(true);
+                        }}
+                        className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-emerald-500"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        <span>{isHindi ? 'पहला खर्च जोड़ें' : 'Add First Expense'}</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                      {cycleTransactions.slice(0, 5).map((t) => {
+                        const isExpense = t.type === 'expense';
+                        const isIncome = t.type === 'income';
+                        const isTransfer = t.type === 'transfer';
+                        const formattedDate = new Date(t.occurred_at).toLocaleDateString(isHindi ? 'hi-IN' : 'en-IN', {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        });
+
+                        return (
+                          <div key={t.id} className="flex items-center justify-between py-3 first:pt-3 last:pb-1">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div
+                                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${
+                                  isExpense
+                                    ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400'
+                                    : isIncome
+                                    ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400'
+                                    : 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400'
+                                }`}
+                              >
+                                {isExpense ? (
+                                  <ArrowDownRight className="h-5 w-5" />
+                                ) : isIncome ? (
+                                  <ArrowUpRight className="h-5 w-5" />
+                                ) : (
+                                  <ArrowRightLeft className="h-5 w-5" />
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                                  {t.merchant || (isTransfer ? (isHindi ? 'खाता ट्रांसफर' : 'Account Transfer') : t.category_name || 'Transaction')}
+                                </p>
+                                <div className="flex items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                                  <span>{formattedDate}</span>
+                                  <span>•</span>
+                                  <span className="truncate">{t.account_name ?? 'Bank / UPI'}</span>
+                                  {t.transfer_to_account_name && (
+                                    <>
+                                      <span>→</span>
+                                      <span className="truncate">{t.transfer_to_account_name}</span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="text-right shrink-0 ml-3">
+                              <p
+                                className={`text-sm font-black ${
+                                  isExpense
+                                    ? 'text-rose-600 dark:text-rose-400'
+                                    : isIncome
+                                    ? 'text-emerald-600 dark:text-emerald-400'
+                                    : 'text-blue-600 dark:text-blue-400'
+                                }`}
+                              >
+                                {isExpense ? '−' : isIncome ? '+' : '⇄'} {formatINR(t.amount_paise)}
+                              </p>
+                              <span className="inline-block text-[10px] font-medium text-zinc-400">
+                                {t.category_name}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {cycleTransactions.length > 5 && (
+                        <div className="pt-3.5 text-center">
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('transactions')}
+                            className="text-xs font-bold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 underline underline-offset-4"
+                          >
+                            {isHindi ? `सभी ${cycleTransactions.length} लेन-देन देखें →` : `View all ${cycleTransactions.length} transactions →`}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+
+                {/* Collapsible How-it-Works Guide Accordion */}
+                <div className="rounded-3xl border border-zinc-200 bg-linear-to-b from-zinc-50/80 to-white p-5 shadow-xs dark:border-zinc-800 dark:from-zinc-900/60 dark:to-zinc-900">
+                  <button
+                    type="button"
+                    onClick={() => setIsGuideOpen(!isGuideOpen)}
+                    className="flex w-full items-center justify-between text-left"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400">
+                        <Sparkles className="h-4 w-4" />
+                      </span>
+                      <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                        {isHindi ? 'आसान गाइड (UPI, नकद व वॉल्ट्स कैसे काम करते हैं)' : 'Quick Guide: How Bank, Cash & Vaults Work'}
+                      </h3>
+                    </div>
+                    <ChevronDown className={`h-4 w-4 text-zinc-400 transition-transform ${isGuideOpen ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {isGuideOpen && (
+                    <div className="mt-4 pt-3 border-t border-zinc-100 dark:border-zinc-800 space-y-3 text-xs text-zinc-600 dark:text-zinc-300 animate-fade-in">
+                      <div className="flex items-start gap-2.5">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
+                          1
+                        </span>
+                        <p>
+                          <strong className="text-zinc-900 dark:text-zinc-100">
+                            {isHindi ? 'ऑनलाइन भुगतान (GPay / PhonePe):' : 'Online / UPI Payment:'}
+                          </strong>{' '}
+                          {isHindi ? 'खर्च जोड़ते समय Bank / UPI खाता चुनें।' : 'Choose Bank / UPI account when adding the expense.'}
+                        </p>
+                      </div>
+
+                      <div className="flex items-start gap-2.5">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
+                          2
+                        </span>
+                        <p>
+                          <strong className="text-zinc-900 dark:text-zinc-100">
+                            {isHindi ? 'नकद खर्च (चाय, ऑटो, सब्जी):' : 'Cash Expense (Chai, Auto, Cash):'}
+                          </strong>{' '}
+                          {isHindi ? 'खर्च जोड़ते समय Cash खाता चुनें।' : 'Choose Cash account when spending cash.'}
+                        </p>
+                      </div>
+
+                      <div className="flex items-start gap-2.5">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
+                          3
+                        </span>
+                        <p>
+                          <strong className="text-zinc-900 dark:text-zinc-100">
+                            {isHindi ? 'ATM निकासी (ATM Withdrawal):' : 'ATM Cash Withdrawal:'}
+                          </strong>{' '}
+                          {isHindi
+                            ? '⇄ ट्रांसफर बटन दबाएं और Bank से Cash में पैसे ट्रांसफर करें।'
+                            : 'Click ⇄ Transfer to move money from Bank to Cash (not an expense!).'}
+                        </p>
+                      </div>
+
+                      <div className="flex items-start gap-2.5">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
+                          4
+                        </span>
+                        <p>
+                          <strong className="text-zinc-900 dark:text-zinc-100">
+                            {isHindi ? 'जेब का नकद मिलाना (Adjust Cash):' : 'Sync Real Cash:'}
+                          </strong>{' '}
+                          {isHindi
+                            ? 'Cash कार्ड पर "गिनती से मिलाएं" दबाएं और जेब का असली नकद दर्ज करें।'
+                            : 'Click "Count & Match" on Cash card whenever your physical cash differs.'}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <p className="mt-2 text-2xl font-black text-indigo-600 dark:text-indigo-400">
-                  {formatINR(totalSavingsBalancePaise, { showPaise: false })}
-                </p>
               </div>
-              <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2.5 text-[11px] dark:border-zinc-800">
-                <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 font-medium text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300">
-                  🏦 {isHindi ? 'ऑनलाइन:' : 'Online:'} {formatINR(onlineSavingsPaise, { showPaise: false })}
-                </span>
-                <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                  <WalletCards className="h-3 w-3" />
-                  {isHindi ? 'नकद बचत:' : 'Cash savings:'} {formatINR(cashSavingsPaise, { showPaise: false })}
-                </span>
-              </div>
-            </div>
+            )}
 
-            {/* Card 2: Total Income (Online & Cash) */}
-            <div className="flex flex-col justify-between rounded-3xl border border-emerald-100 bg-white p-5 shadow-xs dark:border-emerald-950/50 dark:bg-zinc-900">
-              <div>
-                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-                  <span>{isHindi ? 'कुल कमाई' : 'Total Income'}</span>
-                  <ArrowUpRight className="h-4 w-4" />
+            {/* 2. VAULTS & ACCOUNTS TAB */}
+            {activeTab === 'vaults' && (
+              <div className="space-y-8 animate-fade-in">
+                {/* Header Banner */}
+                <div className="rounded-3xl border border-indigo-100 bg-linear-to-b from-indigo-50/40 via-white to-white p-6 shadow-xs dark:border-indigo-950/40 dark:from-indigo-950/20 dark:to-zinc-900">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <span className="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                        {isHindi ? 'सुरक्षित बचत प्रणाली' : 'Ring-Fenced Savings Architecture'}
+                      </span>
+                      <h2 className="mt-1 text-2xl sm:text-3xl font-black text-zinc-900 dark:text-zinc-100">
+                        {formatINR(totalSavingsBalancePaise, { showPaise: false })}
+                      </h2>
+                      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        {isHindi
+                          ? 'दैनिक खर्च से अलग रखी गई आपकी सुरक्षित ऑनलाइन और नकद बचत।'
+                          : 'Digital reserve and physical cash locked away from daily impulse spending.'}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 dark:border-indigo-900/50 dark:bg-indigo-950/40 dark:text-indigo-300">
+                        🏦 {isHindi ? 'ऑनलाइन वॉल्ट:' : 'Online Vault:'} <strong>{formatINR(onlineSavingsPaise, { showPaise: false })}</strong>
+                      </span>
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300">
+                        💵 {isHindi ? 'कैश वॉल्ट:' : 'Cash Vault:'} <strong>{formatINR(cashSavingsPaise, { showPaise: false })}</strong>
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <p className="mt-2 text-2xl font-black text-emerald-600 dark:text-emerald-400">
-                  {formatINR(cycleIncomePaise, { showPaise: false })}
-                </p>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2.5 text-[11px] dark:border-zinc-800">
-                <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
-                  💳 {isHindi ? 'ऑनलाइन:' : 'Online:'} {formatINR(cycleOnlineIncomePaise, { showPaise: false })}
-                </span>
-                <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-                  💵 {isHindi ? 'नकद:' : 'Cash:'} {formatINR(cycleCashIncomePaise, { showPaise: false })}
-                </span>
-              </div>
-            </div>
 
-            {/* Card 3: Total Spent (Online & Cash) */}
-            <div className="flex flex-col justify-between rounded-3xl border border-rose-100 bg-white p-5 shadow-xs dark:border-rose-950/50 dark:bg-zinc-900">
-              <div>
-                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400">
-                  <span>{isHindi ? 'कुल खर्च' : 'Total Spent'}</span>
-                  <ArrowDownRight className="h-4 w-4" />
+                {/* Savings Vault Interactive Card (UPI Save, Deposit/Withdraw, Target Goals) */}
+                <SavingsVaultCard
+                  accounts={accounts}
+                  savingsUpiId={savingsUpiId}
+                  onUpdateSavingsUpi={handleUpdateSavingsUpi}
+                  onTransfer={handleTransferFunds}
+                  onUpdateGoal={handleUpdateAccountGoal}
+                  onCreateSavingsAccount={handleCreateSavingsAccount}
+                  language={language}
+                />
+
+                {/* All Accounts Detailed Grid (with balance reconciliation) */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
+                      {isHindi ? 'सभी खाते (All Accounts)' : 'All Accounts'}
+                    </h3>
+                    <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                      {isHindi ? 'बैलेंस सेट करें या रीकंसाइल करें' : 'Set or reconcile balances'}
+                    </span>
+                  </div>
+                  <AccountCards
+                    accounts={accounts}
+                    onReconcile={handleReconcileAccount}
+                    onOpenTransferModal={() => {
+                      setNewTransactionType('transfer');
+                      setIsAddModalOpen(true);
+                    }}
+                    language={language}
+                  />
                 </div>
-                <p className="mt-2 text-2xl font-black text-rose-600 dark:text-rose-400">
-                  {formatINR(cycleSpentPaise, { showPaise: false })}
-                </p>
               </div>
-              <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2.5 text-[11px] dark:border-zinc-800">
-                <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
-                  💳 {isHindi ? 'ऑनलाइन:' : 'Online:'} {formatINR(cycleOnlineSpentPaise, { showPaise: false })}
-                </span>
-                <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-                  💵 {isHindi ? 'नकद:' : 'Cash:'} {formatINR(cycleCashSpentPaise, { showPaise: false })}
-                </span>
+            )}
+
+            {/* 3. TRANSACTIONS TAB */}
+            {activeTab === 'transactions' && (
+              <div className="space-y-6 animate-fade-in">
+                <TransactionFeed
+                  transactions={cycleTransactions}
+                  onDeleteTransaction={handleDeleteTransaction}
+                  onOpenAddModal={() => {
+                    setNewTransactionType('expense');
+                    setIsAddModalOpen(true);
+                  }}
+                  onOpenResetModal={() => setIsResetModalOpen(true)}
+                  startingBalanceRupees={startingBalanceRupees}
+                  language={language}
+                />
               </div>
-            </div>
+            )}
 
-            {/* Card 4: Spent Today */}
-            <div className="flex flex-col justify-between rounded-3xl border border-blue-100 bg-white p-5 shadow-xs dark:border-blue-950/50 dark:bg-zinc-900">
-              <div>
-                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">
-                  <span>{isHindi ? 'आज का खर्च' : 'Spent Today'}</span>
-                  <span className="text-[11px] font-semibold text-zinc-400">{todayTransactions.length} {isHindi ? 'खर्च' : 'records'}</span>
-                </div>
-                <p className="mt-2 text-2xl font-black text-zinc-900 dark:text-zinc-50">
-                  {formatINR(todaySpendPaise, { showPaise: false })}
-                </p>
-              </div>
-              <div className="mt-3 border-t border-zinc-100 pt-2.5 text-[11px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
-                {isHindi ? 'आज का कुल खर्च' : 'Money spent today'}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Main Content Grid: Transactions on Left, Category Breakdown & Tips on Right */}
-        <section className="grid grid-cols-1 gap-8 lg:grid-cols-3">
-          {/* Left Column: Transaction Feed (2/3 width) */}
-          <div className="space-y-6 lg:col-span-2">
-            <TransactionFeed
-              transactions={cycleTransactions}
-              onDeleteTransaction={handleDeleteTransaction}
-              onOpenAddModal={() => {
-                setNewTransactionType('expense');
-                setIsAddModalOpen(true);
-              }}
-              onOpenResetModal={() => setIsResetModalOpen(true)}
-              startingBalanceRupees={startingBalanceRupees}
-              language={language}
-            />
-          </div>
-
-          {/* Right Column: Category Breakdown & How It Works (1/3 width) */}
-          <div className="space-y-6 lg:col-span-1">
-            <CategoryBreakdown
-              categories={categoryItems}
-              totalSpendPaise={cycleSpentPaise}
-              language={language}
-            />
-
-            {/* How It Works Guide Card */}
-            <div className="rounded-3xl border border-zinc-200 bg-linear-to-b from-zinc-50/80 to-white p-5 shadow-xs dark:border-zinc-800 dark:from-zinc-900/60 dark:to-zinc-900">
-              <div className="flex items-center gap-2">
-                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400">
-                  <Sparkles className="h-4 w-4" />
-                </span>
-                <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                  {isHindi ? 'आसान गाइड (कैसे इस्तेमाल करें)' : 'Simple Guide: How It Works'}
-                </h3>
-              </div>
-
-              <div className="mt-4 space-y-3 text-xs text-zinc-600 dark:text-zinc-300">
-                <div className="flex items-start gap-2.5">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
-                    1
+            {/* 4. INSIGHTS & ANALYTICS TAB */}
+            {activeTab === 'insights' && (
+              <div className="space-y-8 animate-fade-in">
+                {/* Period Selector & Summary Snapshots */}
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                      {isHindi ? 'समय अवधि:' : 'Period:'}
+                    </span>
+                    <div className="flex items-center rounded-xl bg-zinc-200/60 p-0.5 dark:bg-zinc-800">
+                      <button
+                        type="button"
+                        onClick={() => handleCycleChange('weekly')}
+                        className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                          timeRange === 'weekly'
+                            ? 'bg-white text-zinc-900 shadow-xs dark:bg-zinc-700 dark:text-zinc-100'
+                            : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400'
+                        }`}
+                      >
+                        <Zap className="h-3 w-3 text-amber-500" />
+                        <span>{isHindi ? 'सप्ताह' : 'This Week'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCycleChange('monthly')}
+                        className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                          timeRange === 'monthly'
+                            ? 'bg-white text-zinc-900 shadow-xs dark:bg-zinc-700 dark:text-zinc-100'
+                            : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400'
+                        }`}
+                      >
+                        <Calendar className="h-3 w-3 text-emerald-500" />
+                        <span>{isHindi ? 'महीना' : 'This Month'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCycleChange('all')}
+                        className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                          timeRange === 'all'
+                            ? 'bg-white text-zinc-900 shadow-xs dark:bg-zinc-700 dark:text-zinc-100'
+                            : 'text-zinc-600 hover:text-zinc-900 dark:text-zinc-400'
+                        }`}
+                      >
+                        <Layers className="h-3 w-3 text-cyan-500" />
+                        <span>{isHindi ? 'सभी' : 'All Time'}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400 font-medium">
+                    {cycleRangeLabel}
                   </span>
-                  <p>
-                    <strong className="text-zinc-900 dark:text-zinc-100">
-                      {isHindi ? 'ऑनलाइन भुगतान (GPay / PhonePe):' : 'Online / UPI Payment:'}
-                    </strong>{' '}
-                    {isHindi
-                      ? 'खर्च जोड़ते समय Bank / UPI खाता चुनें।'
-                      : 'Choose Bank / UPI account when adding the expense.'}
-                  </p>
                 </div>
 
-                <div className="flex items-start gap-2.5">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
-                    2
-                  </span>
-                  <p>
-                    <strong className="text-zinc-900 dark:text-zinc-100">
-                      {isHindi ? 'नकद खर्च (चाय, ऑटो, सब्जी):' : 'Cash Expense (Chai, Auto, Cash):'}
-                    </strong>{' '}
-                    {isHindi ? 'खर्च जोड़ते समय Cash खाता चुनें।' : 'Choose Cash account when spending cash.'}
-                  </p>
+                {/* 4 Clean Snapshot Cards */}
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  {/* Card 1: Total Savings */}
+                  <div className="flex flex-col justify-between rounded-3xl border border-indigo-100 bg-white p-5 shadow-xs dark:border-indigo-950/50 dark:bg-zinc-900">
+                    <div>
+                      <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400">
+                        <span>{isHindi ? 'कुल बचत (2 वॉल्ट्स)' : 'Total Savings (2 Vaults)'}</span>
+                        <Coins className="h-4 w-4" />
+                      </div>
+                      <p className="mt-2 text-2xl font-black text-indigo-600 dark:text-indigo-400">
+                        {formatINR(totalSavingsBalancePaise, { showPaise: false })}
+                      </p>
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2.5 text-[11px] dark:border-zinc-800">
+                      <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 font-medium text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300">
+                        🏦 {isHindi ? 'ऑनलाइन:' : 'Online:'} {formatINR(onlineSavingsPaise, { showPaise: false })}
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                        <WalletCards className="h-3 w-3" />
+                        {isHindi ? 'नकद बचत:' : 'Cash savings:'} {formatINR(cashSavingsPaise, { showPaise: false })}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Card 2: Total Income */}
+                  <div className="flex flex-col justify-between rounded-3xl border border-emerald-100 bg-white p-5 shadow-xs dark:border-emerald-950/50 dark:bg-zinc-900">
+                    <div>
+                      <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                        <span>{isHindi ? 'कुल कमाई' : 'Total Income'}</span>
+                        <ArrowUpRight className="h-4 w-4" />
+                      </div>
+                      <p className="mt-2 text-2xl font-black text-emerald-600 dark:text-emerald-400">
+                        {formatINR(cycleIncomePaise, { showPaise: false })}
+                      </p>
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2.5 text-[11px] dark:border-zinc-800">
+                      <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                        💳 {isHindi ? 'ऑनलाइन:' : 'Online:'} {formatINR(cycleOnlineIncomePaise, { showPaise: false })}
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                        💵 {isHindi ? 'नकद:' : 'Cash:'} {formatINR(cycleCashIncomePaise, { showPaise: false })}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Total Spent */}
+                  <div className="flex flex-col justify-between rounded-3xl border border-rose-100 bg-white p-5 shadow-xs dark:border-rose-950/50 dark:bg-zinc-900">
+                    <div>
+                      <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400">
+                        <span>{isHindi ? 'कुल खर्च' : 'Total Spent'}</span>
+                        <ArrowDownRight className="h-4 w-4" />
+                      </div>
+                      <p className="mt-2 text-2xl font-black text-rose-600 dark:text-rose-400">
+                        {formatINR(cycleSpentPaise, { showPaise: false })}
+                      </p>
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2.5 text-[11px] dark:border-zinc-800">
+                      <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2 py-0.5 font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                        💳 {isHindi ? 'ऑनलाइन:' : 'Online:'} {formatINR(cycleOnlineSpentPaise, { showPaise: false })}
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                        💵 {isHindi ? 'नकद:' : 'Cash:'} {formatINR(cycleCashSpentPaise, { showPaise: false })}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Card 4: Spent Today */}
+                  <div className="flex flex-col justify-between rounded-3xl border border-blue-100 bg-white p-5 shadow-xs dark:border-blue-950/50 dark:bg-zinc-900">
+                    <div>
+                      <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">
+                        <span>{isHindi ? 'आज का खर्च' : 'Spent Today'}</span>
+                        <span className="text-[11px] font-semibold text-zinc-400">{todayTransactions.length} {isHindi ? 'खर्च' : 'records'}</span>
+                      </div>
+                      <p className="mt-2 text-2xl font-black text-zinc-900 dark:text-zinc-50">
+                        {formatINR(todaySpendPaise, { showPaise: false })}
+                      </p>
+                    </div>
+                    <div className="mt-3 border-t border-zinc-100 pt-2.5 text-[11px] text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                      {isHindi ? 'आज का कुल खर्च' : 'Money spent today'}
+                    </div>
+                  </div>
                 </div>
 
-                <div className="flex items-start gap-2.5">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
-                    3
-                  </span>
-                  <p>
-                    <strong className="text-zinc-900 dark:text-zinc-100">
-                      {isHindi ? 'ATM निकासी (ATM Withdrawal):' : 'ATM Cash Withdrawal:'}
-                    </strong>{' '}
-                    {isHindi
-                      ? '⇄ ट्रांसफर बटन दबाएं और Bank से Cash में पैसे ट्रांसफर करें।'
-                      : 'Click ⇄ Transfer to move money from Bank to Cash (not an expense!).'}
-                  </p>
+                {/* Trend Chart & Category Breakdown */}
+                <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+                  <SpendingTrendChart
+                    transactions={cycleTransactions}
+                    dailyAllowancePaise={budgetPulse.dailySafeAllowancePaise}
+                    language={language}
+                  />
+                  <CategoryBreakdown
+                    categories={categoryItems}
+                    totalSpendPaise={cycleSpentPaise}
+                    language={language}
+                  />
                 </div>
 
-                <div className="flex items-start gap-2.5">
-                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
-                    4
-                  </span>
-                  <p>
-                    <strong className="text-zinc-900 dark:text-zinc-100">
-                      {isHindi ? 'जेब का नकद मिलाना (Adjust Cash):' : 'Sync Real Cash:'}
-                    </strong>{' '}
-                    {isHindi
-                      ? 'Cash कार्ड पर "गिनती से मिलाएं" दबाएं और जेब का असली नकद दर्ज करें।'
-                      : 'Click "Count & Match" on Cash card whenever your physical cash differs.'}
-                  </p>
-                </div>
+                {/* WhatsApp Bot Integration Card */}
+                <WhatsAppLinkCard
+                  isLinked={!!linkedPhone}
+                  linkedPhone={linkedPhone}
+                  onSuccess={(phone) => {
+                    setLinkedPhone(phone);
+                    try {
+                      localStorage.setItem('track_expenser_phone', phone);
+                    } catch {}
+                  }}
+                  language={language}
+                />
               </div>
-            </div>
-          </div>
-        </section>
+            )}
+          </>
+        )}
+      </main>
 
-        {/* Mobile Floating Action Button (FAB) for quick access anywhere */}
-        <div className="fixed bottom-6 right-5 z-30 sm:hidden">
+      {/* Mobile Sticky Bottom Navigation Bar */}
+      <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-zinc-200/80 bg-white/95 px-3 py-1.5 backdrop-blur-lg dark:border-zinc-800/80 dark:bg-zinc-950/95 sm:hidden">
+        <div className="flex items-center justify-around">
+          {/* Overview */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('overview')}
+            className={`flex flex-col items-center gap-0.5 py-1 px-2 text-[10px] font-semibold transition ${
+              activeTab === 'overview'
+                ? 'text-emerald-600 dark:text-emerald-400 font-bold'
+                : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400'
+            }`}
+          >
+            <LayoutDashboard className="h-5 w-5" />
+            <span>{isHindi ? 'डैशबोर्ड' : 'Overview'}</span>
+          </button>
+
+          {/* Vaults & Accounts */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('vaults')}
+            className={`flex flex-col items-center gap-0.5 py-1 px-2 text-[10px] font-semibold transition relative ${
+              activeTab === 'vaults'
+                ? 'text-emerald-600 dark:text-emerald-400 font-bold'
+                : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400'
+            }`}
+          >
+            <ShieldCheck className="h-5 w-5" />
+            <span>{isHindi ? 'तिजोरी' : 'Vaults'}</span>
+            {totalSavingsBalancePaise > 0 && (
+              <span className="absolute top-1 right-2 h-2 w-2 rounded-full bg-indigo-500 ring-2 ring-white dark:ring-zinc-950" />
+            )}
+          </button>
+
+          {/* Central Quick Add FAB */}
           <button
             type="button"
             onClick={() => {
+              setSharedReceiptData(null);
               setNewTransactionType('expense');
               setIsAddModalOpen(true);
             }}
-            className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-600 text-white shadow-2xl shadow-emerald-600/50 transition hover:bg-emerald-500 active:scale-90"
-            aria-label={isHindi ? 'नया खर्च दर्ज करें' : 'Add new transaction'}
+            className="flex -mt-5 h-12 w-12 items-center justify-center rounded-full bg-emerald-600 text-white shadow-lg shadow-emerald-600/40 ring-4 ring-white transition-all hover:bg-emerald-500 active:scale-90 dark:ring-zinc-950"
+            aria-label={isHindi ? 'नया लेन-देन' : 'Add Transaction'}
           >
-            <span className="text-2xl font-black leading-none">+</span>
+            <Plus className="h-6 w-6 stroke-[2.5]" />
+          </button>
+
+          {/* Transactions */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('transactions')}
+            className={`flex flex-col items-center gap-0.5 py-1 px-2 text-[10px] font-semibold transition ${
+              activeTab === 'transactions'
+                ? 'text-emerald-600 dark:text-emerald-400 font-bold'
+                : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400'
+            }`}
+          >
+            <ReceiptText className="h-5 w-5" />
+            <span>{isHindi ? 'इतिहास' : 'History'}</span>
+          </button>
+
+          {/* Insights */}
+          <button
+            type="button"
+            onClick={() => setActiveTab('insights')}
+            className={`flex flex-col items-center gap-0.5 py-1 px-2 text-[10px] font-semibold transition ${
+              activeTab === 'insights'
+                ? 'text-emerald-600 dark:text-emerald-400 font-bold'
+                : 'text-zinc-500 hover:text-zinc-800 dark:text-zinc-400'
+            }`}
+          >
+            <BarChart3 className="h-5 w-5" />
+            <span>{isHindi ? 'विश्लेषण' : 'Insights'}</span>
           </button>
         </div>
-      </main>
+      </nav>
 
       {/* Sign In / Switch Account Modal */}
       <AuthModal
