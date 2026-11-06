@@ -1,8 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ImagePlus, LoaderCircle, Mic, PlusCircle, X, ArrowRightLeft, Landmark, Banknote, Lock, AlertCircle } from 'lucide-react';
-import Image from 'next/image';
+import { Mic, PlusCircle, X, ArrowRightLeft, Landmark, Banknote, Lock, AlertCircle } from 'lucide-react';
 import { DEFAULT_CATEGORIES } from '@/lib/constants';
 import { categoryLabel, type AppLanguage } from '@/lib/i18n';
 import type { DashboardAccount } from './AccountCards';
@@ -122,12 +121,7 @@ export function AddTransactionModal({
   const [showDetails, setShowDetails] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
-  const [isScanning, setIsScanning] = useState(false);
   const [occurredAt, setOccurredAt] = useState<string | undefined>();
-  const [scanConfidence, setScanConfidence] = useState<number | null>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
-  const imagePreviewUrlRef = useRef<string | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
 
   useEffect(() => {
@@ -163,9 +157,6 @@ export function AddTransactionModal({
 
   useEffect(() => {
     return () => {
-      if (imagePreviewUrlRef.current) {
-        URL.revokeObjectURL(imagePreviewUrlRef.current);
-      }
       if (recognitionRef.current) {
         recognitionRef.current.abort();
       }
@@ -175,11 +166,6 @@ export function AddTransactionModal({
   if (!isOpen) return null;
 
   const handleClose = () => {
-    if (imagePreviewUrlRef.current) {
-      URL.revokeObjectURL(imagePreviewUrlRef.current);
-      imagePreviewUrlRef.current = null;
-    }
-    setImagePreviewUrl(null);
     if (recognitionRef.current) {
       recognitionRef.current.abort();
       recognitionRef.current = null;
@@ -192,78 +178,6 @@ export function AddTransactionModal({
     setShowDetails(false);
     setOccurredAt(undefined);
     onClose();
-  };
-
-  const handleScanImage = async (file?: File) => {
-    if (!file) return;
-
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      setError(
-        isHindi
-          ? 'कृपया JPG, PNG या WebP फ़ाइल चुनें।'
-          : 'Please select a JPG, PNG, or WebP image.'
-      );
-      return;
-    }
-
-    if (file.size > 6 * 1024 * 1024) {
-      setError(
-        isHindi
-          ? 'तस्वीर 6 MB से छोटी होनी चाहिए।'
-          : 'Image size must be 6 MB or less.'
-      );
-      return;
-    }
-
-    if (imagePreviewUrlRef.current) {
-      URL.revokeObjectURL(imagePreviewUrlRef.current);
-    }
-    const previewUrl = URL.createObjectURL(file);
-    imagePreviewUrlRef.current = previewUrl;
-    setImagePreviewUrl(previewUrl);
-
-    setIsScanning(true);
-    setError(null);
-    setScanConfidence(null);
-
-    try {
-      const formData = new FormData();
-      formData.append('image', file);
-
-      const response = await fetch('/api/transactions/parse-image', {
-        method: 'POST',
-        body: formData,
-      });
-
-      const result = await response.json();
-      if (!response.ok || !result.extracted) {
-        throw new Error(result.error || 'Failed to scan image');
-      }
-
-      const extracted = result.extracted;
-      if (extracted.transaction) {
-        const tx = extracted.transaction;
-        setType(tx.type === 'income' ? 'income' : 'expense');
-        setAmount((tx.amount_paise / 100).toString());
-        setCategory(tx.category || (tx.type === 'income' ? 'Salary' : 'Food & Dining'));
-        if (tx.merchant) setMerchant(tx.merchant);
-        if (tx.note) setNote(tx.note);
-        if (tx.occurred_at) setOccurredAt(tx.occurred_at);
-        // Screenshots automatically route to Online / Bank account
-        if (defaultBank) setSelectedAccountId(defaultBank.id);
-      }
-
-      setScanConfidence(extracted.confidence);
-      setShowDetails(true);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : isHindi ? 'तस्वीर पढ़ी नहीं जा सकी।' : 'Could not read this image.'
-      );
-    } finally {
-      setIsScanning(false);
-    }
   };
 
   const startVoiceEntry = () => {
@@ -418,33 +332,6 @@ export function AddTransactionModal({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4 p-5">
-          {/* Receipt Scanner (Online only) */}
-          {type !== 'transfer' && (
-            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3.5 dark:border-zinc-700 dark:bg-zinc-800/60">
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="hidden"
-                onChange={(event) => {
-                  void handleScanImage(event.currentTarget.files?.[0]);
-                  event.currentTarget.value = '';
-                }}
-              />
-              <button
-                type="button"
-                disabled={!isAuthenticated || isScanning || loading}
-                onClick={() => imageInputRef.current?.click()}
-                className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-emerald-700 px-4 text-xs font-bold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-500 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
-              >
-                {isScanning ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
-                {isScanning
-                  ? isHindi ? 'तस्वीर स्कैन हो रही है…' : 'Reading screenshot…'
-                  : isHindi ? 'GPay/PhonePe स्क्रीनशॉट स्कैन करें' : 'Scan GPay / PhonePe Screenshot'}
-              </button>
-            </div>
-          )}
-
           {/* 3-Way Mode Switcher: Expense | Income | Transfer */}
           <div className="grid grid-cols-3 gap-1.5 rounded-2xl bg-zinc-100 p-1 dark:bg-zinc-800">
             <button
@@ -805,7 +692,7 @@ export function AddTransactionModal({
 
           <button
             type="submit"
-            disabled={loading || isListening || isScanning || !!isInsufficient}
+            disabled={loading || isListening || !!isInsufficient}
             className={`min-h-12 w-full rounded-2xl px-4 text-base font-bold text-white shadow-sm transition disabled:opacity-50 ${
               isInsufficient
                 ? 'bg-rose-600 hover:bg-rose-700'
