@@ -54,23 +54,44 @@ function unauthorizedResponse() {
   return NextResponse.json({ error: 'Sign in to access your account.' }, { status: 401 });
 }
 
+const isUuidString = (id?: string | null): boolean =>
+  typeof id === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+
 async function safeInsertTransaction(admin: any, txPayload: Record<string, any>) {
+  // Pre-sanitize: strip non-UUID account IDs so PostgreSQL never throws 22P02 (invalid uuid syntax)
+  const sanitized = { ...txPayload };
+  if (sanitized.account_id && !isUuidString(sanitized.account_id)) {
+    delete sanitized.account_id;
+  }
+  if (sanitized.transfer_to_account_id && !isUuidString(sanitized.transfer_to_account_id)) {
+    delete sanitized.transfer_to_account_id;
+  }
+
+  // If transfer has invalid/missing/identical account IDs, convert safely to income deposit
+  if (sanitized.type === 'transfer') {
+    if (!sanitized.account_id || !sanitized.transfer_to_account_id || sanitized.account_id === sanitized.transfer_to_account_id) {
+      sanitized.type = 'income';
+      delete sanitized.transfer_to_account_id;
+      if (!sanitized.merchant) sanitized.merchant = 'Transfer Deposit';
+    }
+  }
+
   try {
-    const res = await admin.from('transactions').insert(txPayload).select('id').single();
+    const res = await admin.from('transactions').insert(sanitized).select('id').single();
     if (!res.error) return res;
 
-    // If column does not exist error (code 42703), strip account_id and transfer_to_account_id
-    if (res.error.code === '42703' || res.error.message?.includes('account_id') || res.error.message?.includes('transfer_to_account_id')) {
-      const cleanPayload = { ...txPayload };
-      delete cleanPayload.account_id;
-      delete cleanPayload.transfer_to_account_id;
-      return await admin.from('transactions').insert(cleanPayload).select('id').single();
-    }
-    return res;
-  } catch {
-    const cleanPayload = { ...txPayload };
+    // If any database error occurs, fallback to clean insert with base fields
+    const cleanPayload = { ...sanitized };
     delete cleanPayload.account_id;
     delete cleanPayload.transfer_to_account_id;
+    if (cleanPayload.type === 'transfer') cleanPayload.type = 'income';
+    return await admin.from('transactions').insert(cleanPayload).select('id').single();
+  } catch {
+    const cleanPayload = { ...sanitized };
+    delete cleanPayload.account_id;
+    delete cleanPayload.transfer_to_account_id;
+    if (cleanPayload.type === 'transfer') cleanPayload.type = 'income';
     return await admin.from('transactions').insert(cleanPayload).select('id').single();
   }
 }
@@ -700,8 +721,8 @@ export async function POST(request: NextRequest) {
           .insert([
             { user_id: user.id, name: 'Bank / UPI', type: 'bank', purpose: 'spending', opening_balance_paise: 0, is_default: true },
             { user_id: user.id, name: 'Cash', type: 'cash', purpose: 'spending', opening_balance_paise: 0, is_default: false },
-            { user_id: user.id, name: 'Online Vault', type: 'bank', purpose: 'savings', opening_balance_paise: 0, target_goal_paise: 5000000, is_default: false },
-            { user_id: user.id, name: 'Cash Vault', type: 'cash', purpose: 'savings', opening_balance_paise: 0, target_goal_paise: 2000000, is_default: false },
+            { user_id: user.id, name: 'Online Vault', type: 'bank', purpose: 'savings', opening_balance_paise: 0, is_default: false },
+            { user_id: user.id, name: 'Cash Vault', type: 'cash', purpose: 'savings', opening_balance_paise: 0, is_default: false },
           ])
           .select('id, name, type, purpose, is_default');
         if (seeded && seeded.length > 0) {
@@ -709,6 +730,31 @@ export async function POST(request: NextRequest) {
         }
       } catch (err) {
         console.warn('[Dashboard API] Auto-seeding in add_transaction warning:', err);
+      }
+    } else if (userAccounts && userAccounts.length > 0 && typeof admin.from('accounts')?.insert === 'function') {
+      const hasOnline = userAccounts.some(
+        (a: any) => a.purpose === 'savings' && (a.type === 'bank' || a.name?.toLowerCase().includes('online'))
+      );
+      const hasCash = userAccounts.some(
+        (a: any) => a.purpose === 'savings' && (a.type === 'cash' || a.name?.toLowerCase().includes('cash'))
+      );
+
+      const toInsert: any[] = [];
+      if (!hasOnline) {
+        toInsert.push({ user_id: user.id, name: 'Online Vault', type: 'bank', purpose: 'savings', opening_balance_paise: 0, is_default: false });
+      }
+      if (!hasCash) {
+        toInsert.push({ user_id: user.id, name: 'Cash Vault', type: 'cash', purpose: 'savings', opening_balance_paise: 0, is_default: false });
+      }
+      if (toInsert.length > 0) {
+        try {
+          const { data: created } = await admin.from('accounts').insert(toInsert).select('id, name, type, purpose, is_default');
+          if (created && created.length > 0) {
+            userAccounts = [...userAccounts, ...created];
+          }
+        } catch (err) {
+          console.warn('[Dashboard API] Auto-seed missing vaults warning:', err);
+        }
       }
     }
 

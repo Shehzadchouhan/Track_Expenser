@@ -633,8 +633,8 @@ export function SavingsVaultCard({
                         setTransferAmountInput('500');
                         const isCashVault = acc.type === 'cash' || acc.name.toLowerCase().includes('cash');
                         const defaultSrc = isCashVault
-                          ? accounts.find((a) => a.type === 'cash')
-                          : accounts.find((a) => a.type === 'bank' || a.is_default);
+                          ? accounts.find((a) => a.purpose === 'spending' && (a.type === 'cash' || a.name.toLowerCase().includes('cash'))) || accounts.find((a) => a.purpose === 'spending')
+                          : accounts.find((a) => a.purpose === 'spending' && (a.type === 'bank' || a.is_default)) || accounts.find((a) => a.purpose === 'spending');
                         setSelectedSourceAccountId(defaultSrc?.id ?? accounts[0]?.id ?? '');
                       }}
                       className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-400 transition hover:text-emerald-300"
@@ -651,8 +651,8 @@ export function SavingsVaultCard({
                         setTransferAmountInput('500');
                         const isCashVault = acc.type === 'cash' || acc.name.toLowerCase().includes('cash');
                         const defaultDest = isCashVault
-                          ? accounts.find((a) => a.type === 'cash')
-                          : accounts.find((a) => a.type === 'bank' || a.is_default);
+                          ? accounts.find((a) => a.purpose === 'spending' && (a.type === 'cash' || a.name.toLowerCase().includes('cash'))) || accounts.find((a) => a.purpose === 'spending')
+                          : accounts.find((a) => a.purpose === 'spending' && (a.type === 'bank' || a.is_default)) || accounts.find((a) => a.purpose === 'spending');
                         setSelectedSourceAccountId(defaultDest?.id ?? accounts[0]?.id ?? '');
                       }}
                       className="inline-flex items-center gap-1 text-xs font-semibold text-zinc-400 transition hover:text-zinc-200"

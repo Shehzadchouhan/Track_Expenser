@@ -908,11 +908,31 @@ export default function Home() {
     const cat = DEFAULT_CATEGORIES.find((c) => c.name === data.category);
     const amount_paise = Math.round(data.amountRupees * 100);
 
-    const fromAcc = accounts.find((a) => a.id === data.accountId) || accounts[0];
-    const toAcc = data.transferToAccountId ? accounts.find((a) => a.id === data.transferToAccountId) : null;
+    const findAccount = (accId?: string | null): DashboardAccount | undefined => {
+      if (!accId) return undefined;
+      const exact = accounts.find((a) => a.id === accId);
+      if (exact) return exact;
+      const lower = accId.toLowerCase();
+      if (lower.includes('cash-vault') || (lower.includes('vault') && lower.includes('cash')) || lower === 'cash vault') {
+        return accounts.find((a) => a.purpose === 'savings' && (a.type === 'cash' || a.name.toLowerCase().includes('cash')));
+      }
+      if (lower.includes('online-vault') || (lower.includes('vault') && lower.includes('online')) || lower.includes('savings')) {
+        return accounts.find((a) => a.purpose === 'savings' && (a.type === 'bank' || a.name.toLowerCase().includes('online')));
+      }
+      if (lower.includes('cash')) {
+        return accounts.find((a) => a.purpose === 'spending' && a.type === 'cash');
+      }
+      if (lower.includes('bank') || lower.includes('upi')) {
+        return accounts.find((a) => a.is_default || (a.purpose === 'spending' && a.type === 'bank'));
+      }
+      return undefined;
+    };
 
-    const sourceAccId = data.accountId || fromAcc?.id;
-    const destAccId = data.transferToAccountId || toAcc?.id;
+    const fromAcc = findAccount(data.accountId) || accounts[0];
+    const toAcc = findAccount(data.transferToAccountId) || null;
+
+    const sourceAccId = fromAcc?.id || data.accountId;
+    const destAccId = toAcc?.id || data.transferToAccountId;
     const isSameAccount = data.type === 'transfer' && sourceAccId && destAccId && sourceAccId === destAccId;
 
     const newTx: DisplayTransaction = {
