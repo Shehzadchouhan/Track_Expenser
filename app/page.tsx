@@ -713,38 +713,175 @@ export default function Home() {
     }
   };
 
-  const handleCreateSavingsAccount = async (name: string, targetGoalRupees: number | null) => {
-    const target_goal_paise = targetGoalRupees !== null ? Math.round(targetGoalRupees * 100) : null;
+  const handleCreateSavingsAccount = async (
+    name: string,
+    type: 'bank' | 'cash' = 'bank',
+    targetGoalRupees: number | null = null,
+    initialDepositRupees?: number,
+    depositFromAccountId?: string
+  ) => {
+    const target_goal_paise =
+      targetGoalRupees !== null && Number.isFinite(targetGoalRupees) && targetGoalRupees > 0
+        ? Math.round(targetGoalRupees * 100)
+        : null;
+    const tempId = `local-savings-${Date.now()}`;
+
+    // 1. Instant optimistic creation
+    const newAcc: DashboardAccount = {
+      id: tempId,
+      name,
+      type,
+      purpose: 'savings',
+      is_default: false,
+      opening_balance_paise: 0,
+      target_goal_paise,
+      current_balance_paise: 0,
+    };
+
+    setAccounts((prev) => {
+      const updated = [...prev, newAcc];
+      try {
+        localStorage.setItem('track_expenser_accounts', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    // 2. If initial deposit requested, execute immediate transfer
+    if (initialDepositRupees && initialDepositRupees > 0 && depositFromAccountId) {
+      await handleTransferFunds(
+        depositFromAccountId,
+        tempId,
+        initialDepositRupees,
+        `Initial Deposit to ${name}`
+      );
+    }
+
+    // 3. Background server synchronization
     if (isAuthenticated) {
-      const res = await fetch('/api/dashboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'create_account',
-          name,
-          type: 'bank',
-          purpose: 'savings',
-          opening_balance_paise: 0,
-          target_goal_paise,
-        }),
+      void (async () => {
+        try {
+          const res = await fetch('/api/dashboard', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'create_account',
+              name,
+              type,
+              purpose: 'savings',
+              opening_balance_paise: 0,
+              target_goal_paise,
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.account?.id) {
+              setAccounts((prev) => {
+                const remapped = prev.map((a) => (a.id === tempId ? { ...a, id: data.account.id } : a));
+                try {
+                  localStorage.setItem('track_expenser_accounts', JSON.stringify(remapped));
+                } catch {}
+                return remapped;
+              });
+            }
+          }
+        } catch (err) {
+          console.warn('[Dashboard] Background create account error:', err);
+        }
+      })();
+    }
+  };
+
+  const handleUpdateAccount = async (
+    accountId: string,
+    updates: { name?: string; type?: 'bank' | 'cash'; targetGoalRupees?: number | null }
+  ) => {
+    const target_goal_paise =
+      updates.targetGoalRupees !== undefined
+        ? updates.targetGoalRupees !== null && Number.isFinite(updates.targetGoalRupees) && updates.targetGoalRupees > 0
+          ? Math.round(updates.targetGoalRupees * 100)
+          : null
+        : undefined;
+
+    // 1. Optimistic update
+    setAccounts((prev) => {
+      const next = prev.map((acc) => {
+        if (acc.id !== accountId) return acc;
+        return {
+          ...acc,
+          ...(updates.name ? { name: updates.name } : {}),
+          ...(updates.type ? { type: updates.type } : {}),
+          ...(target_goal_paise !== undefined ? { target_goal_paise } : {}),
+        };
       });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to create savings goal');
-      }
-      void loadDashboardData();
-    } else {
-      const newAcc: DashboardAccount = {
-        id: `local-savings-${Date.now()}`,
-        name,
-        type: 'bank',
-        purpose: 'savings',
-        is_default: false,
-        opening_balance_paise: 0,
-        target_goal_paise,
-        current_balance_paise: 0,
-      };
-      setAccounts((prev) => [...prev, newAcc]);
+      try {
+        localStorage.setItem('track_expenser_accounts', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    // 2. Background sync
+    if (isAuthenticated) {
+      void (async () => {
+        try {
+          await fetch('/api/dashboard', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'update_account',
+              account_id: accountId,
+              name: updates.name,
+              type: updates.type,
+              target_goal_paise,
+            }),
+          });
+        } catch (err) {
+          console.warn('[Dashboard] Background update account error:', err);
+        }
+      })();
+    }
+  };
+
+  const handleDeleteAccount = async (accountId: string, transferToAccountId?: string) => {
+    const targetAcc = accounts.find((a) => a.id === accountId);
+    if (!targetAcc) return;
+
+    // 1. If transferToAccountId provided and account had funds, transfer them first
+    if (transferToAccountId && targetAcc.current_balance_paise > 0) {
+      const amountRupees = targetAcc.current_balance_paise / 100;
+      await handleTransferFunds(
+        targetAcc.id,
+        transferToAccountId,
+        amountRupees,
+        `Transferred balance upon closing vault: ${targetAcc.name}`
+      );
+    }
+
+    // 2. Optimistic removal
+    setAccounts((prev) => {
+      const next = prev.filter((acc) => acc.id !== accountId);
+      try {
+        localStorage.setItem('track_expenser_accounts', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    // 3. Background server sync
+    if (isAuthenticated) {
+      void (async () => {
+        try {
+          await fetch('/api/dashboard', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'delete_account',
+              account_id: accountId,
+              transfer_to_account_id: transferToAccountId,
+            }),
+          });
+        } catch (err) {
+          console.warn('[Dashboard] Background delete account error:', err);
+        }
+      })();
     }
   };
 
@@ -1542,6 +1679,8 @@ export default function Home() {
                   onTransfer={handleTransferFunds}
                   onUpdateGoal={handleUpdateAccountGoal}
                   onCreateSavingsAccount={handleCreateSavingsAccount}
+                  onUpdateAccount={handleUpdateAccount}
+                  onDeleteAccount={handleDeleteAccount}
                   onReconcile={handleReconcileAccount}
                   language={language}
                 />

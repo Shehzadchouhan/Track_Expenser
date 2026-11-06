@@ -48,6 +48,18 @@ const DashboardMutationSchema = z.discriminatedUnion('action', [
     opening_balance_paise: z.number().int().min(-MAX_PAISE).max(MAX_PAISE).default(0),
     target_goal_paise: z.number().int().min(0).max(MAX_PAISE).nullable().optional(),
   }),
+  z.object({
+    action: z.literal('update_account'),
+    account_id: z.string().min(1),
+    name: z.string().trim().min(1).max(50).optional(),
+    type: z.enum(['bank', 'cash', 'wallet']).optional(),
+    target_goal_paise: z.number().int().min(0).max(MAX_PAISE).nullable().optional(),
+  }),
+  z.object({
+    action: z.literal('delete_account'),
+    account_id: z.string().min(1),
+    transfer_to_account_id: z.string().min(1).optional(),
+  }),
 ]);
 
 const ResetActionSchema = z.enum(['reset_weekly', 'reset_monthly', 'reset_all']);
@@ -351,63 +363,6 @@ export async function GET() {
         }
       } catch {
         accounts = defaultFallbackAccounts;
-      }
-    } else {
-      // Ensure existing DB users have both Online Vault and Cash Vault accounts
-      const hasOnlineVault = accounts.some(
-        (a) => a.purpose === 'savings' && (a.type === 'bank' || a.name.toLowerCase().includes('online'))
-      );
-      const hasCashVault = accounts.some(
-        (a) => a.purpose === 'savings' && (a.type === 'cash' || a.name.toLowerCase().includes('cash'))
-      );
-
-      const missingAccounts: any[] = [];
-      if (!hasOnlineVault) {
-        missingAccounts.push({
-          user_id: user.id,
-          name: 'Online Vault',
-          type: 'bank' as const,
-          purpose: 'savings' as const,
-          opening_balance_paise: 0,
-          target_goal_paise: 5000000,
-          is_default: false,
-        });
-      }
-      if (!hasCashVault) {
-        missingAccounts.push({
-          user_id: user.id,
-          name: 'Cash Vault',
-          type: 'cash' as const,
-          purpose: 'savings' as const,
-          opening_balance_paise: 0,
-          target_goal_paise: 2000000,
-          is_default: false,
-        });
-      }
-
-      if (missingAccounts.length > 0) {
-        try {
-          const { data: newVaults } = await admin
-            .from('accounts')
-            .insert(missingAccounts)
-            .select('id, name, type, purpose, opening_balance_paise, target_goal_paise, is_default');
-          if (newVaults && newVaults.length > 0) {
-            accounts = [...accounts, ...newVaults];
-          }
-        } catch (err) {
-          try {
-            const stripped = missingAccounts.map(({ target_goal_paise: _, ...r }) => r);
-            const { data: newVaults2 } = await admin
-              .from('accounts')
-              .insert(stripped)
-              .select('id, name, type, purpose, opening_balance_paise, is_default');
-            if (newVaults2 && newVaults2.length > 0) {
-              accounts = [...accounts, ...newVaults2];
-            }
-          } catch {
-            console.warn('[Dashboard API] Auto-seeding missing vaults error:', err);
-          }
-        }
       }
     }
 
@@ -921,6 +876,97 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, account: newAccount });
     }
 
+    if (mutation.action === 'update_account') {
+      const updates: {
+        name?: string;
+        type?: 'bank' | 'cash' | 'wallet';
+        target_goal_paise?: number | null;
+      } = {};
+      if (mutation.name !== undefined) updates.name = mutation.name;
+      if (mutation.type !== undefined) updates.type = mutation.type;
+      if (mutation.target_goal_paise !== undefined) updates.target_goal_paise = mutation.target_goal_paise;
+
+      const { data: updatedAcc, error: updateError } = await (admin
+        .from('accounts') as any)
+        .update(updates)
+        .eq('id', mutation.account_id)
+        .eq('user_id', user.id)
+        .select('id, name, type, purpose, opening_balance_paise, target_goal_paise, is_default')
+        .single();
+
+      if (updateError) {
+        console.error('[Dashboard API] Failed to update account:', updateError);
+        return NextResponse.json({ error: 'Could not update account.' }, { status: 500 });
+      }
+
+      return NextResponse.json({ success: true, account: updatedAcc });
+    }
+
+    if (mutation.action === 'delete_account') {
+      const { data: targetAccount, error: fetchErr } = await admin
+        .from('accounts')
+        .select('id, name, type, purpose, is_default')
+        .eq('id', mutation.account_id)
+        .eq('user_id', user.id)
+        .single();
+
+      if (fetchErr || !targetAccount) {
+        return NextResponse.json({ error: 'Account not found.' }, { status: 404 });
+      }
+
+      if (targetAccount.is_default) {
+        return NextResponse.json({ error: 'Cannot delete the default spending account.' }, { status: 400 });
+      }
+
+      if (mutation.transfer_to_account_id) {
+        const allTxRes = await admin
+          .from('transactions')
+          .select('type, amount_paise, account_id, transfer_to_account_id')
+          .eq('user_id', user.id);
+
+        let balance = 0;
+        (allTxRes.data || []).forEach((tx) => {
+          const amt = Number(tx.amount_paise);
+          if (tx.type === 'income' && tx.account_id === targetAccount.id) balance += amt;
+          else if (tx.type === 'expense' && tx.account_id === targetAccount.id) balance -= amt;
+          else if (tx.type === 'transfer') {
+            if (tx.account_id === targetAccount.id && tx.transfer_to_account_id === targetAccount.id) {
+              balance += amt;
+            } else {
+              if (tx.account_id === targetAccount.id) balance -= amt;
+              if (tx.transfer_to_account_id === targetAccount.id) balance += amt;
+            }
+          }
+        });
+
+        if (balance > 0) {
+          await safeInsertTransaction(admin, {
+            user_id: user.id,
+            type: 'transfer',
+            amount_paise: balance,
+            account_id: targetAccount.id,
+            transfer_to_account_id: mutation.transfer_to_account_id,
+            merchant: `Vault Closed: Transfer to Spending`,
+            note: `Remaining balance transferred upon deleting ${targetAccount.name}`,
+            occurred_at: new Date().toISOString(),
+          });
+        }
+      }
+
+      const { error: delError } = await admin
+        .from('accounts')
+        .delete()
+        .eq('id', targetAccount.id)
+        .eq('user_id', user.id);
+
+      if (delError) {
+        console.error('[Dashboard API] Failed to delete account:', delError);
+        return NextResponse.json({ error: 'Could not delete account.' }, { status: 500 });
+      }
+
+      return NextResponse.json({ success: true, deletedAccountId: targetAccount.id });
+    }
+
     // Default: add_transaction
     let { data: userAccounts } = await admin
       .from('accounts')
@@ -944,31 +990,6 @@ export async function POST(request: NextRequest) {
         }
       } catch (err) {
         console.warn('[Dashboard API] Auto-seeding in add_transaction warning:', err);
-      }
-    } else if (userAccounts && userAccounts.length > 0 && typeof admin.from('accounts')?.insert === 'function') {
-      const hasOnline = userAccounts.some(
-        (a: any) => a.purpose === 'savings' && (a.type === 'bank' || a.name?.toLowerCase().includes('online'))
-      );
-      const hasCash = userAccounts.some(
-        (a: any) => a.purpose === 'savings' && (a.type === 'cash' || a.name?.toLowerCase().includes('cash'))
-      );
-
-      const toInsert: any[] = [];
-      if (!hasOnline) {
-        toInsert.push({ user_id: user.id, name: 'Online Vault', type: 'bank', purpose: 'savings', opening_balance_paise: 0, is_default: false });
-      }
-      if (!hasCash) {
-        toInsert.push({ user_id: user.id, name: 'Cash Vault', type: 'cash', purpose: 'savings', opening_balance_paise: 0, is_default: false });
-      }
-      if (toInsert.length > 0) {
-        try {
-          const { data: created } = await admin.from('accounts').insert(toInsert).select('id, name, type, purpose, is_default');
-          if (created && created.length > 0) {
-            userAccounts = [...userAccounts, ...created];
-          }
-        } catch (err) {
-          console.warn('[Dashboard API] Auto-seed missing vaults warning:', err);
-        }
       }
     }
 
