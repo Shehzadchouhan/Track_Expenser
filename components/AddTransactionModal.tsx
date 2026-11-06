@@ -131,21 +131,24 @@ export function AddTransactionModal({
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
 
   useEffect(() => {
-    setType(initialType);
-    if (initialType === 'transfer') {
-      setMerchant(isHindi ? 'ATM निकासी' : 'ATM Withdrawal');
+    if (isOpen) {
+      setType(initialType);
+      setAmount(initialAmount || '');
+      setMerchant(
+        initialMerchant ||
+          (initialType === 'transfer' ? (isHindi ? 'ATM निकासी' : 'ATM Withdrawal') : '')
+      );
+      setCategory(
+        initialCategory ||
+          (initialType === 'income'
+            ? (selectedAccountId === defaultCash?.id ? 'Cash Deposit' : 'Online Deposit')
+            : 'Food & Dining')
+      );
+      setNote(initialNote || '');
+      setError(null);
+      setShowDetails(false);
     }
-    if (initialType === 'income') {
-      setCategory(selectedAccountId === defaultCash?.id ? 'Cash Deposit' : 'Online Deposit');
-    }
-  }, [initialType, isHindi, selectedAccountId, defaultCash]);
-
-  useEffect(() => {
-    if (initialAmount) setAmount(initialAmount);
-    if (initialMerchant) setMerchant(initialMerchant);
-    if (initialCategory) setCategory(initialCategory);
-    if (initialNote) setNote(initialNote);
-  }, [initialAmount, initialMerchant, initialCategory, initialNote]);
+  }, [isOpen, initialAmount, initialMerchant, initialCategory, initialNote, initialType, isHindi, selectedAccountId, defaultCash]);
 
   useEffect(() => {
     if (initialAccountId) {
@@ -185,6 +188,12 @@ export function AddTransactionModal({
       recognitionRef.current = null;
     }
     setIsListening(false);
+    setAmount('');
+    setMerchant('');
+    setNote('');
+    setError(null);
+    setShowDetails(false);
+    setOccurredAt(undefined);
     onClose();
   };
 

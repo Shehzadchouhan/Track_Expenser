@@ -125,8 +125,12 @@ export default function Home() {
     document.documentElement.lang = language;
   }, [language]);
 
+  const isFetchingRef = React.useRef(false);
+
   // The server resolves account identity from the Supabase session cookie.
-  const loadDashboardData = useCallback(async () => {
+  const loadDashboardData = useCallback(async (force = false) => {
+    if (isFetchingRef.current && !force) return false;
+    isFetchingRef.current = true;
     try {
       const res = await fetch('/api/dashboard');
       if (!res.ok) {
@@ -169,6 +173,12 @@ export default function Home() {
               monthlyBudgetPaise: data.monthlyBudgetPaise,
             })
           );
+          if (Array.isArray(data.transactions)) {
+            localStorage.setItem('track_expenser_transactions', JSON.stringify(data.transactions));
+          }
+          if (Array.isArray(data.accounts)) {
+            localStorage.setItem('track_expenser_accounts', JSON.stringify(data.accounts));
+          }
         } catch {}
 
         return true;
@@ -178,6 +188,8 @@ export default function Home() {
       return false;
     } catch {
       return false;
+    } finally {
+      isFetchingRef.current = false;
     }
   }, []);
 
@@ -198,14 +210,16 @@ export default function Home() {
       if (session) {
         setIsAuthenticated(true);
         setUserEmail(session.user?.email || null);
-        await loadDashboardData();
+        await loadDashboardData(true);
         if (typeof window !== 'undefined' && window.location.hash.includes('access_token')) {
           window.history.replaceState(null, '', window.location.pathname + window.location.search);
         }
       } else if (_event === 'SIGNED_OUT') {
         setIsAuthenticated(false);
         setUserEmail(null);
-        localStorage.removeItem('track_expenser_cached_dashboard');
+        try {
+          localStorage.removeItem('track_expenser_cached_dashboard');
+        } catch {}
       }
     });
 
@@ -228,8 +242,11 @@ export default function Home() {
         if (Array.isArray(parsed.accounts) && parsed.accounts.length > 0) {
           setAccounts(parsed.accounts);
         }
-        if (Array.isArray(parsed.transactions) && parsed.transactions.every(isDisplayTransaction)) {
-          setTransactions(parsed.transactions);
+        if (Array.isArray(parsed.transactions)) {
+          const validTx = parsed.transactions.filter(isDisplayTransaction);
+          if (validTx.length > 0) {
+            setTransactions(validTx);
+          }
         }
         if (typeof parsed.startingBalancePaise === 'number') {
           setStartingBalanceRupees(parsed.startingBalancePaise / 100);
@@ -242,27 +259,41 @@ export default function Home() {
 
     // 2. Read local guest state (starting balance, cycle, local records)
     try {
-      const savedStartingBalance = localStorage.getItem('track_expenser_starting_balance');
-      const savedCycle = localStorage.getItem('track_expenser_cycle');
-      const parsedBalance = savedStartingBalance ? Number.parseFloat(savedStartingBalance) : 0;
-      const validStartingBalance = Number.isFinite(parsedBalance) && parsedBalance >= 0 ? parsedBalance : 0;
-      if (validStartingBalance > 0) {
-        setStartingBalanceRupees(validStartingBalance);
-      }
-
-      if (savedCycle && ['weekly', 'monthly', 'all'].includes(savedCycle)) {
-        setTimeRange(savedCycle as 'weekly' | 'monthly' | 'all');
-      }
-
       const savedTransactions = localStorage.getItem('track_expenser_transactions');
       if (savedTransactions) {
         const parsed = JSON.parse(savedTransactions);
         if (Array.isArray(parsed)) {
           const validTx = parsed.filter(isDisplayTransaction);
           if (validTx.length > 0) {
-            setTransactions((prev) => (prev.length === 0 ? validTx : prev));
+            setTransactions((prev) => {
+              if (prev.length === 0 || validTx.length >= prev.length) {
+                return validTx;
+              }
+              return prev;
+            });
           }
         }
+      }
+
+      const savedAccounts = localStorage.getItem('track_expenser_accounts');
+      if (savedAccounts) {
+        const parsedAcc = JSON.parse(savedAccounts);
+        if (Array.isArray(parsedAcc) && parsedAcc.length > 0) {
+          setAccounts(parsedAcc);
+        }
+      }
+
+      const savedStartingBalance = localStorage.getItem('track_expenser_starting_balance');
+      if (savedStartingBalance) {
+        const parsedBalance = Number.parseFloat(savedStartingBalance);
+        if (Number.isFinite(parsedBalance) && parsedBalance >= 0) {
+          setStartingBalanceRupees(parsedBalance);
+        }
+      }
+
+      const savedCycle = localStorage.getItem('track_expenser_cycle');
+      if (savedCycle && ['weekly', 'monthly', 'all'].includes(savedCycle)) {
+        setTimeRange(savedCycle as 'weekly' | 'monthly' | 'all');
       }
     } catch (err) {
       console.warn('[Dashboard] Local storage restore error:', err);
@@ -275,28 +306,33 @@ export default function Home() {
       const openScanner = params.get('open_scanner');
 
       if (sharedAmountPaise || openScanner) {
-        const paise = sharedAmountPaise ? Number(sharedAmountPaise) : undefined;
-        const rupees = paise && Number.isFinite(paise) && paise > 0 ? paise / 100 : undefined;
-        const merchant = params.get('shared_merchant') || undefined;
-        const category = params.get('shared_category') || undefined;
-        const note = params.get('shared_note') || undefined;
-        const type = params.get('shared_type');
+        const sessionKey = `track_expenser_consumed_${sharedAmountPaise || 'scan'}_${params.get('shared_merchant') || ''}`;
+        if (!sessionStorage.getItem(sessionKey)) {
+          sessionStorage.setItem(sessionKey, '1');
 
-        if (type === 'income' || type === 'expense' || type === 'transfer') {
-          setNewTransactionType(type);
-        } else {
-          setNewTransactionType('expense');
+          const paise = sharedAmountPaise ? Number(sharedAmountPaise) : undefined;
+          const rupees = paise && Number.isFinite(paise) && paise > 0 ? paise / 100 : undefined;
+          const merchant = params.get('shared_merchant') || undefined;
+          const category = params.get('shared_category') || undefined;
+          const note = params.get('shared_note') || undefined;
+          const type = params.get('shared_type');
+
+          if (type === 'income' || type === 'expense' || type === 'transfer') {
+            setNewTransactionType(type);
+          } else {
+            setNewTransactionType('expense');
+          }
+
+          setSharedReceiptData({
+            amountRupees: rupees,
+            merchant,
+            category,
+            note,
+          });
+          setIsAddModalOpen(true);
         }
 
-        setSharedReceiptData({
-          amountRupees: rupees,
-          merchant,
-          category,
-          note,
-        });
-        setIsAddModalOpen(true);
-
-        // Clean up URL so refresh doesn't reopen modal
+        // Clean up URL parameters immediately so refresh never re-opens with the same transaction
         window.history.replaceState(null, '', window.location.pathname);
       }
     }
@@ -658,21 +694,58 @@ export default function Home() {
 
   // Permanently delete transaction from Supabase and UI
   const handleDeleteTransaction = async (id: string) => {
-    if (isAuthenticated) {
-      const response = await fetch(
-        `/api/dashboard?id=${encodeURIComponent(id)}`,
-        { method: 'DELETE' }
-      );
-      const responseData = await response.json();
-      if (!response.ok) {
-        throw new Error(responseData.error || 'Could not delete this record. Please try again.');
-      }
-      void loadDashboardData();
-    } else {
-      const savedTransactions = transactions.filter((transaction) => transaction.id !== id);
-      localStorage.setItem('track_expenser_transactions', JSON.stringify(savedTransactions));
+    const deletedTx = transactions.find((t) => t.id === id);
+    const updated = transactions.filter((transaction) => transaction.id !== id);
+    setTransactions(updated);
+
+    let updatedAccounts = accounts;
+    if (deletedTx) {
+      const sourceAccId = deletedTx.account_id || accounts[0]?.id;
+      updatedAccounts = accounts.map((acc) => {
+        let bal = acc.current_balance_paise;
+        if (deletedTx.type === 'expense' && acc.id === sourceAccId) {
+          bal += deletedTx.amount_paise;
+        } else if (deletedTx.type === 'income' && acc.id === sourceAccId) {
+          bal -= deletedTx.amount_paise;
+        } else if (deletedTx.type === 'transfer') {
+          if (acc.id === sourceAccId) {
+            bal += deletedTx.amount_paise;
+          } else if (acc.id === deletedTx.transfer_to_account_id) {
+            bal -= deletedTx.amount_paise;
+          }
+        }
+        return { ...acc, current_balance_paise: bal };
+      });
+      setAccounts(updatedAccounts);
     }
-    setTransactions((prev) => prev.filter((t) => t.id !== id));
+
+    try {
+      localStorage.setItem('track_expenser_transactions', JSON.stringify(updated));
+      localStorage.setItem('track_expenser_accounts', JSON.stringify(updatedAccounts));
+      const existingCached = localStorage.getItem('track_expenser_cached_dashboard');
+      if (existingCached) {
+        const base = JSON.parse(existingCached);
+        localStorage.setItem(
+          'track_expenser_cached_dashboard',
+          JSON.stringify({ ...base, transactions: updated, accounts: updatedAccounts })
+        );
+      }
+    } catch {}
+
+    if (isAuthenticated) {
+      try {
+        const response = await fetch(
+          `/api/dashboard?id=${encodeURIComponent(id)}`,
+          { method: 'DELETE' }
+        );
+        if (!response.ok) {
+          const responseData = await response.json();
+          console.warn('[Dashboard] Delete error on server:', responseData.error);
+        }
+      } catch (err) {
+        console.warn('[Dashboard] Network error during delete:', err);
+      }
+    }
   };
 
   // Reset tracking cycle / history
@@ -699,29 +772,28 @@ export default function Home() {
     }
 
     // Update client transactions
+    let remaining: DisplayTransaction[] = [];
     if (scope === 'reset_weekly') {
-      const remaining = transactions.filter((t) => new Date(t.occurred_at) < startOfWeek);
-      setTransactions(remaining);
-      if (!resetOnServer) localStorage.setItem('track_expenser_transactions', JSON.stringify(remaining));
+      remaining = transactions.filter((t) => new Date(t.occurred_at) < startOfWeek);
     } else if (scope === 'reset_monthly') {
-      const remaining = transactions.filter((t) => new Date(t.occurred_at) < startOfMonth);
-      setTransactions(remaining);
-      if (!resetOnServer) localStorage.setItem('track_expenser_transactions', JSON.stringify(remaining));
+      remaining = transactions.filter((t) => new Date(t.occurred_at) < startOfMonth);
     } else if (scope === 'reset_all') {
-      setTransactions([]);
-      if (!resetOnServer) localStorage.setItem('track_expenser_transactions', JSON.stringify([]));
+      remaining = [];
     }
+    setTransactions(remaining);
 
+    let updatedAccounts = accounts;
     if (resetStartingBalance) {
       setStartingBalanceRupees(0);
-      localStorage.setItem('track_expenser_starting_balance', '0');
-      setAccounts((prev) =>
-        prev.map((acc) => ({
-          ...acc,
-          opening_balance_paise: 0,
-          current_balance_paise: 0,
-        }))
-      );
+      try {
+        localStorage.setItem('track_expenser_starting_balance', '0');
+      } catch {}
+      updatedAccounts = accounts.map((acc) => ({
+        ...acc,
+        opening_balance_paise: 0,
+        current_balance_paise: 0,
+      }));
+      setAccounts(updatedAccounts);
 
       if (resetOnServer) {
         try {
@@ -742,24 +814,35 @@ export default function Home() {
         }
       }
     } else {
-      const remainingTx =
-        scope === 'reset_weekly'
-          ? transactions.filter((t) => new Date(t.occurred_at) < startOfWeek)
-          : scope === 'reset_monthly'
-          ? transactions.filter((t) => new Date(t.occurred_at) < startOfMonth)
-          : [];
-
-      setAccounts((prev) =>
-        prev.map((acc) => {
-          let bal = acc.opening_balance_paise;
-          remainingTx.forEach((tx) => {
-            if (tx.type === 'income' && (tx.account_id === acc.id || (!tx.account_id && acc.is_default))) bal += tx.amount_paise;
-            if (tx.type === 'expense' && (tx.account_id === acc.id || (!tx.account_id && acc.is_default))) bal -= tx.amount_paise;
-          });
-          return { ...acc, current_balance_paise: bal };
-        })
-      );
+      updatedAccounts = accounts.map((acc) => {
+        let bal = acc.opening_balance_paise;
+        remaining.forEach((tx) => {
+          if (tx.type === 'income' && (tx.account_id === acc.id || (!tx.account_id && acc.is_default))) bal += tx.amount_paise;
+          if (tx.type === 'expense' && (tx.account_id === acc.id || (!tx.account_id && acc.is_default))) bal -= tx.amount_paise;
+        });
+        return { ...acc, current_balance_paise: bal };
+      });
+      setAccounts(updatedAccounts);
     }
+
+    // Persist synchronously to localStorage so reloads NEVER resurrect reset history or old balances!
+    try {
+      localStorage.setItem('track_expenser_transactions', JSON.stringify(remaining));
+      localStorage.setItem('track_expenser_accounts', JSON.stringify(updatedAccounts));
+      const existingCached = localStorage.getItem('track_expenser_cached_dashboard');
+      if (existingCached) {
+        const base = JSON.parse(existingCached);
+        localStorage.setItem(
+          'track_expenser_cached_dashboard',
+          JSON.stringify({
+            ...base,
+            transactions: remaining,
+            accounts: updatedAccounts,
+            ...(resetStartingBalance ? { startingBalancePaise: 0 } : {}),
+          })
+        );
+      }
+    } catch {}
 
     if (resetOnServer) {
       void loadDashboardData();
@@ -844,52 +927,49 @@ export default function Home() {
       occurred_at: data.occurredAt ?? new Date().toISOString(),
     };
 
-    // 1. Optimistically append new transaction to state immediately
-    setTransactions((prev) => [newTx, ...prev]);
+    // 1. Calculate updated transactions
+    const updatedTransactions = [newTx, ...transactions];
+    setTransactions(updatedTransactions);
 
     // 2. Optimistically update account balances in state immediately
     const sourceAccId = data.accountId || fromAcc?.id;
-    setAccounts((prev) =>
-      prev.map((acc) => {
-        let bal = acc.current_balance_paise;
-        if (data.type === 'expense' && acc.id === sourceAccId) {
+    const updatedAccounts = accounts.map((acc) => {
+      let bal = acc.current_balance_paise;
+      if (data.type === 'expense' && acc.id === sourceAccId) {
+        bal -= amount_paise;
+      } else if (data.type === 'income' && acc.id === sourceAccId) {
+        bal += amount_paise;
+      } else if (data.type === 'transfer') {
+        if (acc.id === sourceAccId) {
           bal -= amount_paise;
-        } else if (data.type === 'income' && acc.id === sourceAccId) {
+        } else if (acc.id === data.transferToAccountId) {
           bal += amount_paise;
-        } else if (data.type === 'transfer') {
-          if (acc.id === sourceAccId) {
-            bal -= amount_paise;
-          } else if (acc.id === data.transferToAccountId) {
-            bal += amount_paise;
-          }
-        }
-        return { ...acc, current_balance_paise: bal };
-      })
-    );
-
-    // 3. Persist to local storage optimistically (never throws blocking errors to the user)
-    try {
-      const savedTransactions = localStorage.getItem('track_expenser_transactions');
-      let parsedTransactions: DisplayTransaction[] = [];
-      if (savedTransactions) {
-        try {
-          const parsed = JSON.parse(savedTransactions);
-          if (Array.isArray(parsed)) {
-            parsedTransactions = parsed.filter(isDisplayTransaction);
-          }
-        } catch {
-          // ignore parsing error
         }
       }
+      return { ...acc, current_balance_paise: bal };
+    });
+    setAccounts(updatedAccounts);
+
+    // 3. Immediately persist updated transactions & accounts to local storage (both keys so reload NEVER reverts!)
+    try {
+      localStorage.setItem('track_expenser_transactions', JSON.stringify(updatedTransactions));
+      localStorage.setItem('track_expenser_accounts', JSON.stringify(updatedAccounts));
+
+      const existingCached = localStorage.getItem('track_expenser_cached_dashboard');
+      const baseCached = existingCached ? JSON.parse(existingCached) : {};
       localStorage.setItem(
-        'track_expenser_transactions',
-        JSON.stringify([newTx, ...parsedTransactions])
+        'track_expenser_cached_dashboard',
+        JSON.stringify({
+          ...baseCached,
+          accounts: updatedAccounts,
+          transactions: updatedTransactions,
+        })
       );
     } catch (err) {
-      console.warn('[Dashboard] Could not cache transaction locally:', err);
+      console.warn('[Dashboard] LocalStorage caching warning:', err);
     }
 
-    // 4. Background server sync if authenticated (without blocking user on slow mobile networks)
+    // 4. Background server sync if authenticated (without jittery full dashboard refetch!)
     if (isAuthenticated) {
       try {
         const res = await fetch('/api/dashboard', {
@@ -910,11 +990,22 @@ export default function Home() {
         if (res.ok) {
           const resData = await res.json();
           if (resData.transaction?.id) {
-            setTransactions((prev) =>
-              prev.map((t) => (t.id === newTx.id ? { ...t, id: resData.transaction.id } : t))
-            );
+            setTransactions((prev) => {
+              const updated = prev.map((t) => (t.id === newTx.id ? { ...t, id: resData.transaction.id } : t));
+              try {
+                localStorage.setItem('track_expenser_transactions', JSON.stringify(updated));
+                const existingCached = localStorage.getItem('track_expenser_cached_dashboard');
+                if (existingCached) {
+                  const base = JSON.parse(existingCached);
+                  localStorage.setItem(
+                    'track_expenser_cached_dashboard',
+                    JSON.stringify({ ...base, transactions: updated })
+                  );
+                }
+              } catch {}
+              return updated;
+            });
           }
-          void loadDashboardData();
         } else {
           console.warn('[Dashboard] Server rejected transaction sync:', res.status);
         }
@@ -927,30 +1018,36 @@ export default function Home() {
   const handleAuthSuccess = (email: string) => {
     setIsAuthenticated(true);
     setUserEmail(email);
-    setIsAuthModalOpen(false);
-    void loadDashboardData();
+    setIsAddModalOpen(false);
+    void loadDashboardData(true);
   };
 
-  // Sign out
-  const handleSignOut = async () => {
-    try {
-      const response = await fetch('/api/auth/sign-out', { method: 'POST' });
-      if (!response.ok) {
-        throw new Error('Could not sign out. Please try again.');
-      }
+  // Sign out (Instant 0ms UI update + clean session termination)
+  const handleSignOut = () => {
+    setIsAuthenticated(false);
+    setUserEmail(null);
+    setTransactions([]);
+    setStartingBalanceRupees(0);
+    setAccounts([
+      { id: 'default-bank', name: 'Bank / UPI', type: 'bank', purpose: 'spending', is_default: true, opening_balance_paise: 0, target_goal_paise: null, current_balance_paise: 0 },
+      { id: 'default-cash', name: 'Cash', type: 'cash', purpose: 'spending', is_default: false, opening_balance_paise: 0, target_goal_paise: null, current_balance_paise: 0 },
+      { id: 'default-online-vault', name: 'Online Vault', type: 'bank', purpose: 'savings', is_default: false, opening_balance_paise: 0, target_goal_paise: 5000000, current_balance_paise: 0 },
+      { id: 'default-cash-vault', name: 'Cash Vault', type: 'cash', purpose: 'savings', is_default: false, opening_balance_paise: 0, target_goal_paise: 2000000, current_balance_paise: 0 },
+    ]);
 
+    try {
       localStorage.removeItem('track_expenser_phone');
       localStorage.removeItem('track_expenser_starting_balance');
       localStorage.removeItem('track_expenser_cached_dashboard');
       localStorage.removeItem('track_expenser_transactions');
-      setIsAuthenticated(false);
-      setUserEmail(null);
-      setTransactions([]);
-      setStartingBalanceRupees(0);
-    } catch (error) {
-      console.error('[Dashboard] Sign out failed:', error);
-      window.alert('Could not sign out. Please try again.');
-    }
+      localStorage.removeItem('track_expenser_accounts');
+    } catch {}
+
+    void fetch('/api/auth/sign-out', { method: 'POST' }).catch(() => {});
+    try {
+      const client = createBrowserSupabaseClient();
+      void client?.auth?.signOut();
+    } catch {}
   };
 
   return (

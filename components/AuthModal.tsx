@@ -128,11 +128,8 @@ export function AuthModal({
           : isHindi ? 'सफलतापूर्वक साइन इन हुआ!' : 'Signed in successfully!';
 
       setSuccessMsg(welcomeMsg);
-
-      setTimeout(() => {
-        onSuccess(data.email || cleanIdentifier);
-        onClose();
-      }, 500);
+      onSuccess(data.email || cleanIdentifier);
+      onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Authentication failed. Please check and try again.');
     } finally {
