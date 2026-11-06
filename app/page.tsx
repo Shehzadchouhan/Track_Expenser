@@ -435,22 +435,22 @@ export default function Home() {
   // Liquid / Spending balances
   const onlineSpendingPaise = accounts
     .filter((a) => a.purpose === 'spending' && (a.type === 'bank' || a.type === 'wallet'))
-    .reduce((sum, a) => sum + a.current_balance_paise, 0);
+    .reduce((sum, a) => sum + Math.max(0, a.current_balance_paise), 0);
 
   const cashSpendingPaise = accounts
     .filter((a) => a.purpose === 'spending' && a.type === 'cash')
-    .reduce((sum, a) => sum + a.current_balance_paise, 0);
+    .reduce((sum, a) => sum + Math.max(0, a.current_balance_paise), 0);
 
   const totalSpendingBalancePaise = onlineSpendingPaise + cashSpendingPaise;
 
   // Vault / Savings balances (2 Distinct Vaults: Online Vault & Cash Vault)
   const onlineSavingsPaise = accounts
     .filter((a) => a.purpose === 'savings' && (a.type === 'bank' || a.name.toLowerCase().includes('online')))
-    .reduce((sum, a) => sum + a.current_balance_paise, 0);
+    .reduce((sum, a) => sum + Math.max(0, a.current_balance_paise), 0);
 
   const cashSavingsPaise = accounts
     .filter((a) => a.purpose === 'savings' && (a.type === 'cash' || a.name.toLowerCase().includes('cash')))
-    .reduce((sum, a) => sum + a.current_balance_paise, 0);
+    .reduce((sum, a) => sum + Math.max(0, a.current_balance_paise), 0);
 
   const totalSavingsBalancePaise = onlineSavingsPaise + cashSavingsPaise;
 
@@ -962,6 +962,27 @@ export default function Home() {
     const sourceAccId = fromAcc?.id || data.accountId;
     const destAccId = toAcc?.id || data.transferToAccountId;
     const isSameAccount = data.type === 'transfer' && sourceAccId && destAccId && sourceAccId === destAccId;
+
+    // Guard: Prevent negative money storage / insufficient balance
+    if (data.type === 'expense' && fromAcc && fromAcc.current_balance_paise < amount_paise) {
+      const avail = (Math.max(0, fromAcc.current_balance_paise) / 100).toFixed(2);
+      const needed = data.amountRupees.toFixed(2);
+      throw new Error(
+        isHindi
+          ? `${fromAcc.name} में अपर्याप्त बैलेंस है! उपलब्ध: ₹${avail}, आवश्यक: ₹${needed}`
+          : `Insufficient balance in ${fromAcc.name}! Available: ₹${avail}, Needed: ₹${needed}`
+      );
+    }
+
+    if (data.type === 'transfer' && !isSameAccount && fromAcc && fromAcc.current_balance_paise < amount_paise) {
+      const avail = (Math.max(0, fromAcc.current_balance_paise) / 100).toFixed(2);
+      const needed = data.amountRupees.toFixed(2);
+      throw new Error(
+        isHindi
+          ? `${fromAcc.name} में अपर्याप्त बैलेंस है! उपलब्ध: ₹${avail}, आवश्यक: ₹${needed}`
+          : `Insufficient balance in ${fromAcc.name}! Available: ₹${avail}, Needed: ₹${needed}`
+      );
+    }
 
     const newTx: DisplayTransaction = {
       id: `manual-${Date.now()}`,

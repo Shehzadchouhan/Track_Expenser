@@ -172,8 +172,14 @@ export function AccountCards({
                 : isHindi ? 'उपलब्ध खर्च शेष' : 'Spending Balance'}
             </p>
             <p className="mt-1 text-2xl font-black text-zinc-900 dark:text-zinc-50">
-              {formatINR(acc.current_balance_paise, { showPaise: false })}
+              {formatINR(Math.max(0, acc.current_balance_paise), { showPaise: false })}
             </p>
+            {acc.current_balance_paise < 0 && (
+              <div className="mt-1.5 flex items-center gap-1 text-[11px] font-bold text-rose-600 dark:text-rose-400">
+                <AlertCircle className="h-3 w-3 shrink-0" />
+                <span>{isHindi ? 'अपर्याप्त बैलेंस (बैलेंस सेट करें)' : 'Insufficient balance (Set balance)'}</span>
+              </div>
+            )}
           </div>
         </div>
 

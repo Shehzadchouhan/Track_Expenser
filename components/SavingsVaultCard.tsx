@@ -51,7 +51,7 @@ export function SavingsVaultCard({
   const spendingAccounts = accounts.filter((a) => a.purpose === 'spending');
   const defaultSpendingAccount = spendingAccounts.find((a) => a.is_default) ?? spendingAccounts[0];
 
-  const totalSavedPaise = savingsAccounts.reduce((sum, a) => sum + a.current_balance_paise, 0);
+  const totalSavedPaise = savingsAccounts.reduce((sum, a) => sum + Math.max(0, a.current_balance_paise), 0);
 
   // Modals and form states
   const [activeTransferAccount, setActiveTransferAccount] = useState<DashboardAccount | null>(null);
@@ -84,6 +84,18 @@ export function SavingsVaultCard({
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const parsedTransferAmount = Number(transferAmountInput);
+  const transferAmountPaise = Number.isFinite(parsedTransferAmount) && parsedTransferAmount > 0 ? Math.round(parsedTransferAmount * 100) : 0;
+  const activeSourceAcc = accounts.find((a) => a.id === selectedSourceAccountId) ?? spendingAccounts[0] ?? accounts[0];
+
+  const isVaultInsufficient = !!(
+    activeTransferAccount &&
+    transferAmountPaise > 0 &&
+    (transferMode === 'deposit'
+      ? (selectedSourceAccountId !== activeTransferAccount.id && activeSourceAcc && activeSourceAcc.current_balance_paise < transferAmountPaise)
+      : (activeTransferAccount.current_balance_paise < transferAmountPaise))
+  );
 
   const showFeedback = (msg: string, isError = false) => {
     if (isError) {
@@ -136,6 +148,31 @@ export function SavingsVaultCard({
     if (!sourceAcc) {
       showFeedback(isHindi ? 'कोई खाता नहीं मिला' : 'No account found', true);
       return;
+    }
+
+    const amountPaise = Math.round(amount * 100);
+
+    // Prevent negative money storage
+    if (transferMode === 'deposit') {
+      if (sourceAcc.id !== activeTransferAccount.id && sourceAcc.current_balance_paise < amountPaise) {
+        showFeedback(
+          isHindi
+            ? `${sourceAcc.name} में अपर्याप्त बैलेंस! उपलब्ध: ₹${(Math.max(0, sourceAcc.current_balance_paise) / 100).toFixed(2)}, आवश्यक: ₹${amount.toFixed(2)}`
+            : `Insufficient balance in ${sourceAcc.name}! Available: ₹${(Math.max(0, sourceAcc.current_balance_paise) / 100).toFixed(2)}, Needed: ₹${amount.toFixed(2)}`,
+          true
+        );
+        return;
+      }
+    } else {
+      if (activeTransferAccount.current_balance_paise < amountPaise) {
+        showFeedback(
+          isHindi
+            ? `${activeTransferAccount.name} में अपर्याप्त बचत! उपलब्ध: ₹${(Math.max(0, activeTransferAccount.current_balance_paise) / 100).toFixed(2)}, आवश्यक: ₹${amount.toFixed(2)}`
+            : `Insufficient savings in ${activeTransferAccount.name}! Available: ₹${(Math.max(0, activeTransferAccount.current_balance_paise) / 100).toFixed(2)}, Needed: ₹${amount.toFixed(2)}`,
+          true
+        );
+        return;
+      }
     }
 
     setLoading(true);
@@ -263,6 +300,17 @@ export function SavingsVaultCard({
     const sourceAcc = defaultSpendingAccount;
 
     if (!sourceAcc) {
+      setUpiConfirmModal(null);
+      return;
+    }
+
+    if (sourceAcc.current_balance_paise < Math.round(amountRupees * 100)) {
+      showFeedback(
+        isHindi
+          ? `${sourceAcc.name} में अपर्याप्त बैलेंस है! उपलब्ध: ₹${(Math.max(0, sourceAcc.current_balance_paise) / 100).toFixed(2)}`
+          : `Insufficient balance in ${sourceAcc.name}! Available: ₹${(Math.max(0, sourceAcc.current_balance_paise) / 100).toFixed(2)}`,
+        true
+      );
       setUpiConfirmModal(null);
       return;
     }
@@ -558,7 +606,7 @@ export function SavingsVaultCard({
             </div>
           ) : (
             savingsAccounts.map((acc) => {
-              const currentRupees = acc.current_balance_paise / 100;
+              const currentRupees = Math.max(0, acc.current_balance_paise) / 100;
               const targetRupees = acc.target_goal_paise ? acc.target_goal_paise / 100 : null;
               const progressPercent = targetRupees && targetRupees > 0
                 ? Math.min(100, Math.round((currentRupees / targetRupees) * 100))
@@ -603,7 +651,7 @@ export function SavingsVaultCard({
                     {/* Balance */}
                     <div className="mt-3 flex items-baseline justify-between">
                       <span className="text-xl font-black tracking-tight text-zinc-100">
-                        {formatINR(acc.current_balance_paise, { showPaise: false })}
+                        {formatINR(Math.max(0, acc.current_balance_paise), { showPaise: false })}
                       </span>
                       {progressPercent !== null && (
                         <span className="text-xs font-bold text-emerald-400">
@@ -712,7 +760,7 @@ export function SavingsVaultCard({
                 >
                   {accounts.map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.name} ({s.purpose === 'savings' ? (isHindi ? 'तिजोरी' : 'Vault') : (isHindi ? 'खर्च' : 'Spending')}) - {formatINR(s.current_balance_paise, { showPaise: false })}
+                      {s.name} ({s.purpose === 'savings' ? (isHindi ? 'तिजोरी' : 'Vault') : (isHindi ? 'खर्च' : 'Spending')}) - {formatINR(Math.max(0, s.current_balance_paise), { showPaise: false })}
                     </option>
                   ))}
                 </select>
@@ -735,9 +783,29 @@ export function SavingsVaultCard({
                   min="1"
                   value={transferAmountInput}
                   onChange={(e) => setTransferAmountInput(e.target.value)}
-                  className="mt-1.5 w-full rounded-xl border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-base font-bold text-zinc-100 focus:border-emerald-500 focus:outline-hidden"
+                  className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 text-base font-bold text-zinc-100 focus:outline-hidden ${
+                    isVaultInsufficient
+                      ? 'border-rose-500 bg-rose-950/20 focus:border-rose-500'
+                      : 'border-zinc-700 bg-zinc-800 focus:border-emerald-500'
+                  }`}
                 />
               </div>
+
+              {isVaultInsufficient && (
+                <div className="flex items-start gap-2 rounded-xl border border-rose-800/60 bg-rose-950/40 p-2.5 text-xs text-rose-300">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-rose-400" />
+                  <div>
+                    <p className="font-bold">
+                      {isHindi ? 'अपर्याप्त बैलेंस (Insufficient Balance)' : 'Insufficient Balance'}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-rose-300/90">
+                      {isHindi
+                        ? `${transferMode === 'deposit' ? activeSourceAcc?.name : activeTransferAccount.name} में केवल ₹${(Math.max(0, transferMode === 'deposit' ? (activeSourceAcc?.current_balance_paise ?? 0) : activeTransferAccount.current_balance_paise) / 100).toFixed(2)} उपलब्ध है।`
+                        : `Only ₹${(Math.max(0, transferMode === 'deposit' ? (activeSourceAcc?.current_balance_paise ?? 0) : activeTransferAccount.current_balance_paise) / 100).toFixed(2)} available in ${transferMode === 'deposit' ? activeSourceAcc?.name : activeTransferAccount.name}.`}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <p className="text-[11px] text-zinc-400">
                 {transferMode === 'deposit'
@@ -759,11 +827,15 @@ export function SavingsVaultCard({
                 </button>
                 <button
                   type="submit"
-                  disabled={loading}
-                  className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white transition hover:bg-emerald-500 disabled:opacity-50"
+                  disabled={loading || isVaultInsufficient}
+                  className={`flex-1 rounded-xl py-2.5 text-xs font-bold text-white transition disabled:opacity-50 ${
+                    isVaultInsufficient ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-500'
+                  }`}
                 >
                   {loading
                     ? '...'
+                    : isVaultInsufficient
+                    ? isHindi ? '⚠️ अपर्याप्त बैलेंस' : '⚠️ Insufficient Balance'
                     : transferMode === 'deposit'
                     ? isHindi ? 'सुरक्षित जमा करें' : 'Lock Deposit'
                     : isHindi ? 'निकालें' : 'Confirm Withdrawal'}

@@ -54,8 +54,8 @@ export function TotalBalanceCard({
   const spendingAccounts = accounts.filter((a) => a.purpose === 'spending');
   const currentBalancePaise =
     spendingAccounts.length > 0
-      ? spendingAccounts.reduce((sum, a) => sum + a.current_balance_paise, 0)
-      : startingBalancePaise + netDeltaPaise;
+      ? spendingAccounts.reduce((sum, a) => sum + Math.max(0, a.current_balance_paise), 0)
+      : Math.max(0, startingBalancePaise + netDeltaPaise);
 
   // Percentage fluctuation from starting capital
   const percentChange =
@@ -92,7 +92,7 @@ export function TotalBalanceCard({
           {/* Current Live Balance */}
           <div className="mt-2 flex items-baseline gap-3">
             <h2 className="text-3xl font-extrabold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-4xl">
-              {formatINR(currentBalancePaise, { showPaise: false })}
+              {formatINR(Math.max(0, currentBalancePaise), { showPaise: false })}
             </h2>
 
             {/* Overall Fluctuation Pill */}
@@ -127,7 +127,7 @@ export function TotalBalanceCard({
                 >
                   {a.type === 'bank' ? '💳' : a.type === 'cash' ? '💵' : '🪙'}{' '}
                   <span>{a.name}:</span>
-                  <span className="font-bold">{formatINR(a.current_balance_paise, { showPaise: false })}</span>
+                  <span className="font-bold">{formatINR(Math.max(0, a.current_balance_paise), { showPaise: false })}</span>
                 </span>
               ))}
             </div>

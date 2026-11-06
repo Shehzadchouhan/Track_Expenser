@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ImagePlus, LoaderCircle, Mic, PlusCircle, X, ArrowRightLeft, Landmark, Banknote, Lock } from 'lucide-react';
+import { ImagePlus, LoaderCircle, Mic, PlusCircle, X, ArrowRightLeft, Landmark, Banknote, Lock, AlertCircle } from 'lucide-react';
 import Image from 'next/image';
 import { DEFAULT_CATEGORIES } from '@/lib/constants';
 import { categoryLabel, type AppLanguage } from '@/lib/i18n';
@@ -320,11 +320,33 @@ export function AddTransactionModal({
     }
   };
 
+  const selectedAcc = accounts.find(
+    (a) => a.id === (type === 'transfer' ? fromAccountId : selectedAccountId)
+  );
+  const amountRupees = Number(amount);
+  const amountPaise = Number.isFinite(amountRupees) && amountRupees > 0 ? Math.round(amountRupees * 100) : 0;
+  const isDeduction = type === 'expense' || (type === 'transfer' && fromAccountId !== toAccountId);
+  const isInsufficient =
+    isDeduction &&
+    amountPaise > 0 &&
+    !!selectedAcc &&
+    selectedAcc.current_balance_paise < amountPaise;
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const amountRupees = Number(amount);
     if (!Number.isFinite(amountRupees) || amountRupees <= 0) {
       setError(isHindi ? 'कृपया सही रकम डालें।' : 'Please enter a valid amount.');
+      return;
+    }
+
+    if (isInsufficient && selectedAcc) {
+      const avail = (Math.max(0, selectedAcc.current_balance_paise) / 100).toFixed(2);
+      const needed = amountRupees.toFixed(2);
+      setError(
+        isHindi
+          ? `${selectedAcc.name} में अपर्याप्त बैलेंस है! उपलब्ध: ₹${avail}, आवश्यक: ₹${needed}`
+          : `Insufficient money in ${selectedAcc.name}! Available: ₹${avail}, Needed: ₹${needed}`
+      );
       return;
     }
 
@@ -614,6 +636,10 @@ export function AddTransactionModal({
                         </p>
                         <p className="truncate text-[10px] text-zinc-500 dark:text-zinc-400">
                           {isVault ? (isHindi ? 'तिजोरी' : 'Vault') : isCash ? (isHindi ? 'नकद' : 'Cash') : 'Bank / Online'}
+                          {' • '}
+                          <span className={acc.current_balance_paise < 0 ? 'font-bold text-rose-600' : 'font-semibold text-zinc-700 dark:text-zinc-300'}>
+                            ₹{(Math.max(0, acc.current_balance_paise) / 100).toFixed(0)}
+                          </span>
                         </p>
                       </div>
                     </button>
@@ -645,8 +671,14 @@ export function AddTransactionModal({
             <label htmlFor="transaction-amount" className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
               {isHindi ? 'राशि (रुपये)' : 'Amount (₹)'}
             </label>
-            <div className="mt-1.5 flex items-center rounded-2xl border-2 border-zinc-300 bg-zinc-50 px-4 focus-within:border-emerald-500 dark:border-zinc-700 dark:bg-zinc-800">
-              <span className="text-2xl font-bold text-zinc-500">₹</span>
+            <div
+              className={`mt-1.5 flex items-center rounded-2xl border-2 px-4 focus-within:border-emerald-500 ${
+                isInsufficient
+                  ? 'border-rose-500 bg-rose-50/40 dark:border-rose-600 dark:bg-rose-950/20'
+                  : 'border-zinc-300 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800'
+              }`}
+            >
+              <span className={`text-2xl font-bold ${isInsufficient ? 'text-rose-500' : 'text-zinc-500'}`}>₹</span>
               <input
                 id="transaction-amount"
                 type="number"
@@ -656,11 +688,29 @@ export function AddTransactionModal({
                 required
                 autoFocus
                 value={amount}
-                onChange={(event) => setAmount(event.target.value)}
+                onChange={(event) => {
+                  setAmount(event.target.value);
+                  if (error) setError(null);
+                }}
                 placeholder="0"
                 className="min-h-14 w-full bg-transparent px-3 text-2xl font-bold text-zinc-900 outline-none dark:text-zinc-100"
               />
             </div>
+            {isInsufficient && selectedAcc && (
+              <div className="mt-2 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-xs font-semibold text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
+                <div>
+                  <p className="font-bold">
+                    {isHindi ? 'अपर्याप्त बैलेंस (Insufficient Money)' : 'Insufficient Money'}
+                  </p>
+                  <p className="mt-0.5 text-[11px] font-normal text-rose-600 dark:text-rose-300">
+                    {isHindi
+                      ? `${selectedAcc.name} में केवल ₹${(Math.max(0, selectedAcc.current_balance_paise) / 100).toFixed(2)} उपलब्ध है। आप ₹${amountRupees.toFixed(2)} खर्च या ट्रांसफर नहीं कर सकते।`
+                      : `Only ₹${(Math.max(0, selectedAcc.current_balance_paise) / 100).toFixed(2)} available in ${selectedAcc.name}. You cannot spend or transfer ₹${amountRupees.toFixed(2)}.`}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Merchant / Description */}
@@ -755,11 +805,17 @@ export function AddTransactionModal({
 
           <button
             type="submit"
-            disabled={loading || isListening || isScanning}
-            className="min-h-12 w-full rounded-2xl bg-emerald-600 px-4 text-base font-bold text-white shadow-sm transition hover:bg-emerald-500 disabled:opacity-50"
+            disabled={loading || isListening || isScanning || !!isInsufficient}
+            className={`min-h-12 w-full rounded-2xl px-4 text-base font-bold text-white shadow-sm transition disabled:opacity-50 ${
+              isInsufficient
+                ? 'bg-rose-600 hover:bg-rose-700'
+                : 'bg-emerald-600 hover:bg-emerald-500'
+            }`}
           >
             {loading
               ? isHindi ? 'सेव हो रहा है…' : 'Saving…'
+              : isInsufficient
+              ? isHindi ? '⚠️ अपर्याप्त बैलेंस (रकम कम करें)' : '⚠️ Insufficient Balance'
               : type === 'transfer'
               ? isHindi ? 'ट्रांसफर रिकॉर्ड करें' : 'Record Transfer'
               : isHindi ? 'रिकॉर्ड सेव करें' : 'Save Record'}
