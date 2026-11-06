@@ -29,6 +29,7 @@ import {
   ArrowRightLeft,
   ArrowUpRight,
   ArrowDownRight,
+  Camera,
   Coins,
   WalletCards,
   LayoutDashboard,
@@ -108,13 +109,15 @@ export default function Home() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  // Shared Receipt state (Web Share Target)
+  // Shared Receipt / Screenshot state (Web Share Target or Camera scan)
   const [sharedReceiptData, setSharedReceiptData] = useState<{
     amountRupees?: number;
     merchant?: string;
     category?: string;
     note?: string;
   } | null>(null);
+  const [isScanningReceipt, setIsScanningReceipt] = useState(false);
+  const receiptFileInputRef = React.useRef<HTMLInputElement>(null);
 
   const language = useSyncExternalStore(
     subscribeToLanguage,
@@ -1057,6 +1060,52 @@ export default function Home() {
     }
   };
 
+  const handleReceiptScanClick = () => {
+    if (receiptFileInputRef.current) {
+      receiptFileInputRef.current.click();
+    }
+  };
+
+  const handleReceiptFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsScanningReceipt(true);
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+
+      const response = await fetch('/api/transactions/parse-image', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (response.ok) {
+        const json = await response.json();
+        const tx = json.transaction;
+        if (tx) {
+          setSharedReceiptData({
+            amountRupees: tx.amount_paise ? tx.amount_paise / 100 : undefined,
+            merchant: tx.merchant || undefined,
+            category: tx.category || undefined,
+            note: tx.note || undefined,
+          });
+          setNewTransactionType(tx.type === 'income' ? 'income' : 'expense');
+          setIsAddModalOpen(true);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('[Dashboard] Receipt scan error:', err);
+    } finally {
+      setIsScanningReceipt(false);
+      if (receiptFileInputRef.current) {
+        receiptFileInputRef.current.value = '';
+      }
+      setIsAddModalOpen(true);
+    }
+  };
+
   const handleAddTransaction = async (data: {
     type: 'expense' | 'income' | 'transfer';
     amountRupees: number;
@@ -1456,8 +1505,8 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {/* 3 Interactive Quick Action Buttons */}
-                    <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
+                    {/* 4 Interactive Quick Action Buttons */}
+                    <div className="grid grid-cols-2 gap-2.5 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
                       <button
                         type="button"
                         onClick={() => {
@@ -1465,7 +1514,7 @@ export default function Home() {
                           setNewTransactionType('expense');
                           setIsAddModalOpen(true);
                         }}
-                        className="group inline-flex min-h-12 items-center justify-center gap-1.5 sm:gap-2 rounded-2xl bg-zinc-900 px-2.5 py-3 text-xs sm:text-sm font-bold text-white shadow-md transition-all hover:bg-zinc-800 active:scale-95 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-100 sm:px-6"
+                        className="group inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-zinc-900 px-4 py-3 text-sm font-bold text-white shadow-md transition-all hover:bg-zinc-800 active:scale-95 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-100 sm:px-6"
                       >
                         <span className="text-rose-400 group-hover:scale-125 transition-transform font-bold">−</span>
                         <span>{isHindi ? 'खर्च जोड़ें' : 'Add Expense'}</span>
@@ -1478,7 +1527,7 @@ export default function Home() {
                           setNewTransactionType('income');
                           setIsAddModalOpen(true);
                         }}
-                        className="group inline-flex min-h-12 items-center justify-center gap-1.5 sm:gap-2 rounded-2xl border border-zinc-300 bg-white px-2.5 py-3 text-xs sm:text-sm font-bold text-zinc-900 shadow-xs transition-all hover:bg-zinc-50 hover:border-emerald-400 active:scale-95 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 sm:px-5"
+                        className="group inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-zinc-300 bg-white px-4 py-3 text-sm font-bold text-zinc-900 shadow-xs transition-all hover:bg-zinc-50 hover:border-emerald-400 active:scale-95 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 sm:px-5"
                       >
                         <span className="text-emerald-600 group-hover:scale-125 transition-transform font-bold">+</span>
                         <span>{isHindi ? 'कमाई जोड़ें' : 'Add Income'}</span>
@@ -1491,10 +1540,20 @@ export default function Home() {
                           setNewTransactionType('transfer');
                           setIsAddModalOpen(true);
                         }}
-                        className="group inline-flex min-h-12 items-center justify-center gap-1.5 sm:gap-2 rounded-2xl border border-blue-200 bg-blue-50/70 px-2.5 py-3 text-xs sm:text-sm font-bold text-blue-800 shadow-xs transition-all hover:bg-blue-100 active:scale-95 dark:border-blue-900/50 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60 sm:px-5"
+                        className="group inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-blue-200 bg-blue-50/70 px-4 py-3 text-sm font-bold text-blue-800 shadow-xs transition-all hover:bg-blue-100 active:scale-95 dark:border-blue-900/50 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60 sm:px-5"
                       >
-                        <ArrowRightLeft className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-blue-600 group-hover:rotate-180 transition-transform duration-300 shrink-0" />
-                        <span className="truncate">{isHindi ? 'ट्रांसफर / ATM' : 'Transfer / ATM'}</span>
+                        <ArrowRightLeft className="h-4 w-4 text-blue-600 group-hover:rotate-180 transition-transform duration-300" />
+                        <span>{isHindi ? 'ट्रांसफर / ATM' : 'Transfer / ATM'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleReceiptScanClick}
+                        disabled={isScanningReceipt}
+                        className="group inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm font-bold text-emerald-800 shadow-xs transition-all hover:bg-emerald-100 active:scale-95 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300 sm:px-5"
+                      >
+                        <Camera className="h-4 w-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
+                        <span>{isScanningReceipt ? (isHindi ? 'पढ़ रहे हैं...' : 'Scanning...') : (isHindi ? 'रसीद स्कैन' : 'Scan Receipt')}</span>
                       </button>
                     </div>
                   </div>
@@ -1566,7 +1625,7 @@ export default function Home() {
                         {isHindi ? 'कोई लेन-देन दर्ज नहीं है' : 'No transactions recorded yet'}
                       </p>
                       <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                        {isHindi ? 'खर्च, कमाई या ट्रांसफर जोड़ें' : 'Add an expense, income, or transfer to get started'}
+                        {isHindi ? 'खर्च, कमाई या ट्रांसफर जोड़ें या UPI रसीद स्कैन करें' : 'Add an expense, income, or scan a UPI receipt to get started'}
                       </p>
                       <button
                         type="button"
@@ -1953,6 +2012,16 @@ export default function Home() {
         currentScope={timeRange}
         onConfirmReset={handleConfirmReset}
         language={language}
+      />
+
+      {/* Hidden file input for direct receipt / UPI screenshot scanning */}
+      <input
+        type="file"
+        ref={receiptFileInputRef}
+        onChange={handleReceiptFileChange}
+        accept="image/*"
+        className="hidden"
+        aria-hidden="true"
       />
 
       {/* Manual Add Transaction / Transfer Modal */}
