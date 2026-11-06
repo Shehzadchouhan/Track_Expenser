@@ -28,6 +28,8 @@ const DashboardMutationSchema = z.discriminatedUnion('action', [
     amount_paise: z.number().int().min(MIN_PAISE).max(MAX_PAISE),
     account_id: z.string().min(1).nullable().optional(),
     transfer_to_account_id: z.string().min(1).nullable().optional(),
+    source_account_name: z.string().trim().max(50).nullable().optional(),
+    transfer_to_account_name: z.string().trim().max(50).nullable().optional(),
     category_name: z.string().trim().min(1).max(40).optional(),
     merchant: z.string().trim().max(100).nullable().optional(),
     note: z.string().trim().max(280).nullable().optional(),
@@ -58,6 +60,100 @@ const isUuidString = (id?: string | null): boolean =>
   typeof id === 'string' &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
 
+function formatTxMeta(meta: {
+  type: 'income' | 'expense' | 'transfer';
+  from?: string | null;
+  to?: string | null;
+  fromName?: string | null;
+  toName?: string | null;
+}) {
+  return `[TX_META:type=${meta.type};from=${meta.from || ''};to=${meta.to || ''};fromName=${encodeURIComponent(meta.fromName || '')};toName=${encodeURIComponent(meta.toName || '')}]`;
+}
+
+function parseTxMeta(note?: string | null): {
+  type?: 'income' | 'expense' | 'transfer';
+  from?: string;
+  to?: string;
+  fromName?: string;
+  toName?: string;
+  cleanNote: string;
+} {
+  if (!note) return { cleanNote: '' };
+  const match = note.match(/\[TX_META:type=([^;]+);from=([^;]*);to=([^;]*);fromName=([^;]*);toName=([^;\]]*)\]/);
+  if (!match) return { cleanNote: note };
+  try {
+    return {
+      type: match[1] as any,
+      from: match[2] || undefined,
+      to: match[3] || undefined,
+      fromName: match[4] ? decodeURIComponent(match[4]) : undefined,
+      toName: match[5] ? decodeURIComponent(match[5]) : undefined,
+      cleanNote: note.replace(match[0], '').trim(),
+    };
+  } catch {
+    return {
+      type: match[1] as any,
+      from: match[2] || undefined,
+      to: match[3] || undefined,
+      fromName: match[4] || undefined,
+      toName: match[5] || undefined,
+      cleanNote: note.replace(match[0], '').trim(),
+    };
+  }
+}
+
+function resolveAccountForTx(
+  id: string | null | undefined,
+  merchantOrNote: string,
+  bankAcc: any,
+  cashAcc: any,
+  onlineVaultAcc: any,
+  cashVaultAcc: any,
+  role: 'from' | 'to'
+): string {
+  if (id === 'default-cash-vault' || (id && isUuidString(id) && id === cashVaultAcc?.id)) {
+    return cashVaultAcc?.id ?? 'default-cash-vault';
+  }
+  if (id === 'default-online-vault' || (id && isUuidString(id) && id === onlineVaultAcc?.id)) {
+    return onlineVaultAcc?.id ?? 'default-online-vault';
+  }
+  if (id === 'default-cash' || (id && isUuidString(id) && id === cashAcc?.id)) {
+    return cashAcc?.id ?? 'default-cash';
+  }
+  if (id === 'default-bank' || (id && isUuidString(id) && id === bankAcc?.id)) {
+    return bankAcc?.id ?? 'default-bank';
+  }
+
+  const lower = merchantOrNote.toLowerCase();
+  if (role === 'to') {
+    if (lower.includes('cash vault') || (lower.includes('vault') && lower.includes('cash'))) {
+      return cashVaultAcc?.id ?? 'default-cash-vault';
+    }
+    if (lower.includes('online vault') || lower.includes('savings vault') || lower.includes('vault') || lower.includes('savings')) {
+      return onlineVaultAcc?.id ?? 'default-online-vault';
+    }
+    if (lower.includes('cash') || lower.includes('atm')) {
+      return cashAcc?.id ?? 'default-cash';
+    }
+    return bankAcc?.id ?? 'default-bank';
+  } else {
+    // role === 'from'
+    if (lower.includes('from cash vault') || lower.includes('withdrawal from cash vault')) {
+      return cashVaultAcc?.id ?? 'default-cash-vault';
+    }
+    if (lower.includes('from online vault') || lower.includes('from savings vault') || lower.includes('withdrawal from online vault')) {
+      return onlineVaultAcc?.id ?? 'default-online-vault';
+    }
+    if (lower.includes('cash vault') || (lower.includes('cash') && (lower.includes('deposit') || lower.includes('top-up')))) {
+      return cashAcc?.id ?? 'default-cash';
+    }
+    if (lower.includes('cash')) {
+      return cashAcc?.id ?? 'default-cash';
+    }
+    return bankAcc?.id ?? 'default-bank';
+  }
+}
+
 async function safeInsertTransaction(admin: any, txPayload: Record<string, any>) {
   // Pre-sanitize: strip non-UUID account IDs so PostgreSQL never throws 22P02 (invalid uuid syntax)
   const sanitized = { ...txPayload };
@@ -68,31 +164,39 @@ async function safeInsertTransaction(admin: any, txPayload: Record<string, any>)
     delete sanitized.transfer_to_account_id;
   }
 
-  // If transfer has invalid/missing/identical account IDs, convert safely to income deposit
-  if (sanitized.type === 'transfer') {
-    if (!sanitized.account_id || !sanitized.transfer_to_account_id || sanitized.account_id === sanitized.transfer_to_account_id) {
-      sanitized.type = 'income';
-      delete sanitized.transfer_to_account_id;
-      if (!sanitized.merchant) sanitized.merchant = 'Transfer Deposit';
-    }
-  }
-
   try {
     const res = await admin.from('transactions').insert(sanitized).select('id').single();
     if (!res.error) return res;
 
-    // If any database error occurs, fallback to clean insert with base fields
-    const cleanPayload = { ...sanitized };
-    delete cleanPayload.account_id;
-    delete cleanPayload.transfer_to_account_id;
-    if (cleanPayload.type === 'transfer') cleanPayload.type = 'income';
-    return await admin.from('transactions').insert(cleanPayload).select('id').single();
+    // If PostgreSQL rejects type='transfer' (constraint violation 23514 on unmigrated DB):
+    // Fall back to type='expense' (outflow), keeping merchant and metadata tag intact!
+    const fallbackPayload = { ...sanitized };
+    delete fallbackPayload.account_id;
+    delete fallbackPayload.transfer_to_account_id;
+    if (fallbackPayload.type === 'transfer') {
+      fallbackPayload.type = 'expense';
+    }
+
+    const fbRes = await admin.from('transactions').insert(fallbackPayload).select('id').single();
+    if (!fbRes.error) return fbRes;
+
+    // Ultimate fallback: type='income'
+    if (fallbackPayload.type === 'expense') {
+      fallbackPayload.type = 'income';
+      return await admin.from('transactions').insert(fallbackPayload).select('id').single();
+    }
+    return fbRes;
   } catch {
     const cleanPayload = { ...sanitized };
     delete cleanPayload.account_id;
     delete cleanPayload.transfer_to_account_id;
-    if (cleanPayload.type === 'transfer') cleanPayload.type = 'income';
-    return await admin.from('transactions').insert(cleanPayload).select('id').single();
+    if (cleanPayload.type === 'transfer') cleanPayload.type = 'expense';
+    try {
+      return await admin.from('transactions').insert(cleanPayload).select('id').single();
+    } catch {
+      cleanPayload.type = 'income';
+      return await admin.from('transactions').insert(cleanPayload).select('id').single();
+    }
   }
 }
 
@@ -148,8 +252,13 @@ export async function GET() {
       }
     }
 
-    let [{ data: accounts, error: accountsError }, { data: categories, error: categoriesError }] =
-      await Promise.all([
+    let accounts: any[] | null = null;
+    let accountsError: any = null;
+    let categories: any[] | null = null;
+    let categoriesError: any = null;
+
+    try {
+      const [accRes, catRes] = await Promise.all([
         admin
           .from('accounts')
           .select('id, name, type, purpose, opening_balance_paise, target_goal_paise, is_default')
@@ -160,6 +269,29 @@ export async function GET() {
           .select('id, name, color, kind')
           .eq('user_id', user.id),
       ]);
+
+      categories = catRes.data;
+      categoriesError = catRes.error;
+
+      if (accRes.error) {
+        // Fallback without target_goal_paise in case column doesn't exist
+        const baseAccRes = await admin
+          .from('accounts')
+          .select('id, name, type, purpose, opening_balance_paise, is_default')
+          .eq('user_id', user.id)
+          .order('is_default', { ascending: false });
+
+        if (baseAccRes.error) {
+          accountsError = baseAccRes.error;
+        } else {
+          accounts = baseAccRes.data;
+        }
+      } else {
+        accounts = accRes.data;
+      }
+    } catch (err) {
+      accountsError = err;
+    }
 
     const defaultFallbackAccounts = [
       {
@@ -189,7 +321,7 @@ export async function GET() {
         type: 'bank' as const,
         purpose: 'savings' as const,
         opening_balance_paise: 0,
-        target_goal_paise: null,
+        target_goal_paise: 5000000,
         is_default: false,
       },
       {
@@ -199,7 +331,7 @@ export async function GET() {
         type: 'cash' as const,
         purpose: 'savings' as const,
         opening_balance_paise: 0,
-        target_goal_paise: null,
+        target_goal_paise: 2000000,
         is_default: false,
       },
     ];
@@ -263,7 +395,18 @@ export async function GET() {
             accounts = [...accounts, ...newVaults];
           }
         } catch (err) {
-          console.warn('[Dashboard API] Auto-seeding missing vaults error:', err);
+          try {
+            const stripped = missingAccounts.map(({ target_goal_paise: _, ...r }) => r);
+            const { data: newVaults2 } = await admin
+              .from('accounts')
+              .insert(stripped)
+              .select('id, name, type, purpose, opening_balance_paise, is_default');
+            if (newVaults2 && newVaults2.length > 0) {
+              accounts = [...accounts, ...newVaults2];
+            }
+          } catch {
+            console.warn('[Dashboard API] Auto-seeding missing vaults error:', err);
+          }
         }
       }
     }
@@ -340,7 +483,7 @@ export async function GET() {
     if (allTxRes.error) {
       const fallbackAllTx = await admin
         .from('transactions')
-        .select('type, amount_paise, merchant')
+        .select('type, amount_paise, merchant, note')
         .eq('user_id', user.id);
       allUserTx = fallbackAllTx.data ?? [];
     } else {
@@ -349,56 +492,69 @@ export async function GET() {
 
     allUserTx.forEach((tx) => {
       const amt = Number(tx.amount_paise);
-      let targetAccId = tx.account_id;
-      let destAccId = tx.transfer_to_account_id;
+      const parsedMeta = parseTxMeta(tx.note);
 
+      let effectiveType: 'income' | 'expense' | 'transfer' = parsedMeta.type || tx.type;
+      let fromAccId = parsedMeta.from || tx.account_id;
+      let toAccId = parsedMeta.to || tx.transfer_to_account_id;
       const merchantOrNote = `${tx.merchant || ''} ${tx.note || ''}`.toLowerCase();
 
-      // If targetAccId is null or unknown, resolve resiliently
-      if (!targetAccId || !accountBalances.has(targetAccId)) {
-        if (targetAccId === 'default-cash-vault' || merchantOrNote.includes('cash vault') || (merchantOrNote.includes('vault') && merchantOrNote.includes('cash'))) {
-          targetAccId = cashVaultAcc?.id ?? 'default-cash-vault';
-        } else if (targetAccId === 'default-online-vault' || merchantOrNote.includes('online vault') || merchantOrNote.includes('vault') || merchantOrNote.includes('savings')) {
-          targetAccId = onlineVaultAcc?.id ?? 'default-online-vault';
-        } else if (targetAccId === 'default-cash' || merchantOrNote.includes('cash')) {
-          targetAccId = cashAcc?.id ?? 'default-cash';
-        } else {
-          targetAccId = bankAcc?.id ?? 'default-bank';
+      // Resolve fromAccId if missing or unmapped
+      if (!fromAccId || !accountBalances.has(fromAccId)) {
+        fromAccId = resolveAccountForTx(fromAccId, merchantOrNote, bankAcc, cashAcc, onlineVaultAcc, cashVaultAcc, 'from');
+      }
+
+      // If transfer, resolve toAccId if missing or unmapped
+      if (effectiveType === 'transfer' && (!toAccId || !accountBalances.has(toAccId))) {
+        toAccId = resolveAccountForTx(toAccId, merchantOrNote, bankAcc, cashAcc, onlineVaultAcc, cashVaultAcc, 'to');
+      }
+
+      // Legacy auto-detection for older records:
+      // If a transaction has merchant like "Deposit to Cash Vault" or "Deposit into Cash Vault"
+      // or "Deposit to Online Vault" (or "Withdrawal from ..."), reconstruct the transfer
+      if (effectiveType !== 'transfer') {
+        if (merchantOrNote.includes('deposit to cash vault') || merchantOrNote.includes('deposit into cash vault')) {
+          effectiveType = 'transfer';
+          fromAccId = cashAcc?.id ?? 'default-cash';
+          toAccId = cashVaultAcc?.id ?? 'default-cash-vault';
+        } else if (merchantOrNote.includes('withdrawal from cash vault') || merchantOrNote.includes('withdraw from cash vault')) {
+          effectiveType = 'transfer';
+          fromAccId = cashVaultAcc?.id ?? 'default-cash-vault';
+          toAccId = cashAcc?.id ?? 'default-cash';
+        } else if (merchantOrNote.includes('deposit to online vault') || merchantOrNote.includes('deposit into online vault') || merchantOrNote.includes('deposit to savings vault')) {
+          effectiveType = 'transfer';
+          fromAccId = bankAcc?.id ?? 'default-bank';
+          toAccId = onlineVaultAcc?.id ?? 'default-online-vault';
+        } else if (merchantOrNote.includes('withdrawal from online vault') || merchantOrNote.includes('withdraw from online vault') || merchantOrNote.includes('withdrawal from savings vault')) {
+          effectiveType = 'transfer';
+          fromAccId = onlineVaultAcc?.id ?? 'default-online-vault';
+          toAccId = bankAcc?.id ?? 'default-bank';
+        } else if (merchantOrNote.includes('cash vault reconciliation')) {
+          fromAccId = cashVaultAcc?.id ?? 'default-cash-vault';
+        } else if (merchantOrNote.includes('online vault reconciliation') || merchantOrNote.includes('savings vault reconciliation')) {
+          fromAccId = onlineVaultAcc?.id ?? 'default-online-vault';
         }
       }
 
-      // If destAccId is unknown in a transfer, resolve resiliently
-      if (tx.type === 'transfer' && (!destAccId || !accountBalances.has(destAccId))) {
-        if (destAccId === 'default-cash-vault' || merchantOrNote.includes('cash vault') || (merchantOrNote.includes('vault') && merchantOrNote.includes('cash'))) {
-          destAccId = cashVaultAcc?.id ?? 'default-cash-vault';
-        } else if (destAccId === 'default-online-vault' || merchantOrNote.includes('online vault') || merchantOrNote.includes('vault') || merchantOrNote.includes('savings')) {
-          destAccId = onlineVaultAcc?.id ?? 'default-online-vault';
-        } else if (destAccId === 'default-cash' || merchantOrNote.includes('cash') || merchantOrNote.includes('atm')) {
-          destAccId = cashAcc?.id ?? 'default-cash';
-        } else if (destAccId === 'default-bank') {
-          destAccId = bankAcc?.id ?? 'default-bank';
-        }
-      }
-
-      if (tx.type === 'income' && targetAccId) {
-        const cur = accountBalances.get(targetAccId) ?? 0;
-        accountBalances.set(targetAccId, cur + amt);
-      } else if (tx.type === 'expense' && targetAccId) {
-        const cur = accountBalances.get(targetAccId) ?? 0;
-        accountBalances.set(targetAccId, cur - amt);
-      } else if (tx.type === 'transfer') {
-        if (targetAccId && destAccId && targetAccId === destAccId) {
+      if (effectiveType === 'income' && fromAccId) {
+        const cur = accountBalances.get(fromAccId) ?? 0;
+        accountBalances.set(fromAccId, cur + amt);
+      } else if (effectiveType === 'expense' && fromAccId) {
+        const cur = accountBalances.get(fromAccId) ?? 0;
+        accountBalances.set(fromAccId, cur - amt);
+      } else if (effectiveType === 'transfer') {
+        if (fromAccId && toAccId && fromAccId === toAccId) {
           // Same source to same destination transfer: top-up / deposit!
-          const cur = accountBalances.get(targetAccId) ?? 0;
-          accountBalances.set(targetAccId, cur + amt);
+          const cur = accountBalances.get(fromAccId) ?? 0;
+          accountBalances.set(fromAccId, cur + amt);
         } else {
-          if (targetAccId) {
-            const curFrom = accountBalances.get(targetAccId) ?? 0;
-            accountBalances.set(targetAccId, curFrom - amt);
+          if (fromAccId) {
+            const curFrom = accountBalances.get(fromAccId) ?? 0;
+            accountBalances.set(fromAccId, curFrom - amt);
           }
-          if (destAccId) {
-            const curTo = accountBalances.get(destAccId) ?? 0;
-            accountBalances.set(destAccId, curTo + amt);
+          if (toAccId) {
+            const curTo = accountBalances.get(toAccId) ?? 0;
+            accountBalances.set(toAccId, curTo + amt);
           }
         }
       }
@@ -418,32 +574,47 @@ export async function GET() {
     const categoryMap = new Map((categories ?? []).map((category) => [category.id, category]));
     const transactions = (txList ?? []).map((transaction) => {
       const category = transaction.category_id ? categoryMap.get(transaction.category_id) : null;
-      let account = transaction.account_id ? accountMap.get(transaction.account_id) : null;
-      if (!account) {
-        if (transaction.merchant?.toLowerCase().includes('cash')) {
-          account = accountMap.get('default-cash');
-        } else if (transaction.merchant?.toLowerCase().includes('vault') || transaction.merchant?.toLowerCase().includes('savings')) {
-          account = accountMap.get('default-online-vault') || accountMap.get('default-cash-vault') || accountMap.get('default-savings');
-        } else {
-          account = accountMap.get('default-bank');
+      const parsedMeta = parseTxMeta(transaction.note);
+
+      let effectiveType: 'income' | 'expense' | 'transfer' = parsedMeta.type || transaction.type;
+      let fromAccId = parsedMeta.from || transaction.account_id;
+      let toAccId = parsedMeta.to || transaction.transfer_to_account_id;
+      const merchantOrNote = `${transaction.merchant || ''} ${transaction.note || ''}`.toLowerCase();
+
+      if (!fromAccId || !accountMap.has(fromAccId)) {
+        fromAccId = resolveAccountForTx(fromAccId, merchantOrNote, bankAcc, cashAcc, onlineVaultAcc, cashVaultAcc, 'from');
+      }
+      if (effectiveType === 'transfer' && (!toAccId || !accountMap.has(toAccId))) {
+        toAccId = resolveAccountForTx(toAccId, merchantOrNote, bankAcc, cashAcc, onlineVaultAcc, cashVaultAcc, 'to');
+      }
+
+      if (effectiveType !== 'transfer') {
+        if (merchantOrNote.includes('deposit to cash vault') || merchantOrNote.includes('deposit into cash vault')) {
+          effectiveType = 'transfer';
+          fromAccId = cashAcc?.id ?? 'default-cash';
+          toAccId = cashVaultAcc?.id ?? 'default-cash-vault';
+        } else if (merchantOrNote.includes('deposit to online vault') || merchantOrNote.includes('deposit into online vault') || merchantOrNote.includes('deposit to savings vault')) {
+          effectiveType = 'transfer';
+          fromAccId = bankAcc?.id ?? 'default-bank';
+          toAccId = onlineVaultAcc?.id ?? 'default-online-vault';
         }
       }
-      const transferTo = transaction.transfer_to_account_id
-        ? accountMap.get(transaction.transfer_to_account_id)
-        : null;
+
+      const fromAccount = fromAccId ? accountMap.get(fromAccId) : null;
+      const toAccount = toAccId ? accountMap.get(toAccId) : null;
 
       return {
         id: transaction.id,
-        type: transaction.type,
+        type: effectiveType,
         amount_paise: Number(transaction.amount_paise),
-        account_id: transaction.account_id,
-        account_name: account?.name ?? 'Bank / UPI',
-        transfer_to_account_id: transaction.transfer_to_account_id,
-        transfer_to_account_name: transferTo?.name ?? null,
+        account_id: fromAccId,
+        account_name: fromAccount?.name ?? parsedMeta.fromName ?? 'Bank / UPI',
+        transfer_to_account_id: toAccId ?? null,
+        transfer_to_account_name: toAccount?.name ?? parsedMeta.toName ?? null,
         merchant: transaction.merchant,
-        note: transaction.note,
-        category_name: category?.name ?? (transaction.type === 'transfer' ? 'Transfer' : 'General'),
-        category_color: category?.color ?? (transaction.type === 'transfer' ? '#3B82F6' : '#64748B'),
+        note: parsedMeta.cleanNote || null,
+        category_name: category?.name ?? (effectiveType === 'transfer' ? 'Transfer' : 'General'),
+        category_color: category?.color ?? (effectiveType === 'transfer' ? '#3B82F6' : '#64748B'),
         source: transaction.source,
         occurred_at: transaction.occurred_at,
       };
@@ -564,35 +735,70 @@ export async function POST(request: NextRequest) {
       let allTx: any[] = [];
       const txRes = await admin
         .from('transactions')
-        .select('type, amount_paise, account_id, transfer_to_account_id, merchant')
+        .select('type, amount_paise, account_id, transfer_to_account_id, merchant, note')
         .eq('user_id', user.id);
 
       if (txRes.error) {
         const fbRes = await admin
           .from('transactions')
-          .select('type, amount_paise, merchant')
+          .select('type, amount_paise, merchant, note')
           .eq('user_id', user.id);
         allTx = fbRes.data ?? [];
       } else {
         allTx = txRes.data ?? [];
       }
 
+      const isTargetAcc = (id?: string | null, merchantOrNote = '') => {
+        if (!id) return false;
+        if (targetAccount?.id && id === targetAccount.id) return true;
+        const lowId = id.toLowerCase();
+        const lowMut = mutation.account_id.toLowerCase();
+        if (lowMut.includes('cash-vault') && (lowId.includes('cash-vault') || lowId.includes('cash vault') || merchantOrNote.includes('cash vault'))) return true;
+        if ((lowMut.includes('online-vault') || lowMut.includes('savings')) && (lowId.includes('online-vault') || lowId.includes('online vault') || lowId.includes('savings') || merchantOrNote.includes('online vault'))) return true;
+        if (lowMut.includes('cash') && !lowMut.includes('vault') && (lowId.includes('cash') && !lowId.includes('vault'))) return true;
+        if ((lowMut.includes('bank') || lowMut.includes('upi')) && !lowMut.includes('vault') && (lowId.includes('bank') || lowId.includes('upi'))) return true;
+        return false;
+      };
+
       allTx.forEach((tx) => {
         const amt = Number(tx.amount_paise);
-        let accMatch = false;
-        if (tx.account_id && targetAccount?.id) {
-          accMatch = tx.account_id === targetAccount.id;
-        } else if (mutation.account_id.includes('cash')) {
-          accMatch = Boolean(tx.merchant?.toLowerCase().includes('cash'));
-        } else if (mutation.account_id.includes('savings')) {
-          accMatch = Boolean(tx.merchant?.toLowerCase().includes('savings'));
-        } else {
-          accMatch = !tx.merchant?.toLowerCase().includes('cash') && !tx.merchant?.toLowerCase().includes('savings');
+        const parsedMeta = parseTxMeta(tx.note);
+        let effectiveType: 'income' | 'expense' | 'transfer' = parsedMeta.type || tx.type;
+        let fromAccId = parsedMeta.from || tx.account_id;
+        let toAccId = parsedMeta.to || tx.transfer_to_account_id;
+        const merchantOrNote = `${tx.merchant || ''} ${tx.note || ''}`.toLowerCase();
+
+        if (effectiveType !== 'transfer') {
+          if (merchantOrNote.includes('deposit to cash vault') || merchantOrNote.includes('deposit into cash vault')) {
+            effectiveType = 'transfer';
+            fromAccId = 'default-cash';
+            toAccId = 'default-cash-vault';
+          } else if (merchantOrNote.includes('withdrawal from cash vault') || merchantOrNote.includes('withdraw from cash vault')) {
+            effectiveType = 'transfer';
+            fromAccId = 'default-cash-vault';
+            toAccId = 'default-cash';
+          } else if (merchantOrNote.includes('deposit to online vault') || merchantOrNote.includes('deposit into online vault') || merchantOrNote.includes('deposit to savings vault')) {
+            effectiveType = 'transfer';
+            fromAccId = 'default-bank';
+            toAccId = 'default-online-vault';
+          } else if (merchantOrNote.includes('withdrawal from online vault') || merchantOrNote.includes('withdraw from online vault') || merchantOrNote.includes('withdrawal from savings vault')) {
+            effectiveType = 'transfer';
+            fromAccId = 'default-online-vault';
+            toAccId = 'default-bank';
+          }
         }
 
-        if (accMatch) {
-          if (tx.type === 'income') currentBalance += amt;
-          if (tx.type === 'expense') currentBalance -= amt;
+        if (effectiveType === 'income' && isTargetAcc(fromAccId, merchantOrNote)) {
+          currentBalance += amt;
+        } else if (effectiveType === 'expense' && isTargetAcc(fromAccId, merchantOrNote)) {
+          currentBalance -= amt;
+        } else if (effectiveType === 'transfer') {
+          if (fromAccId && toAccId && fromAccId === toAccId) {
+            if (isTargetAcc(fromAccId, merchantOrNote)) currentBalance += amt;
+          } else {
+            if (isTargetAcc(fromAccId, merchantOrNote)) currentBalance -= amt;
+            if (isTargetAcc(toAccId, merchantOrNote)) currentBalance += amt;
+          }
         }
       });
 
@@ -603,23 +809,31 @@ export async function POST(request: NextRequest) {
 
       const isPositive = difference > 0;
       const accountDisplayName = targetAccount?.name ?? (
-        mutation.account_id.includes('cash')
+        mutation.account_id.includes('cash-vault')
+          ? 'Cash Vault'
+          : mutation.account_id.includes('cash')
           ? 'Cash'
-          : mutation.account_id.includes('savings')
-          ? 'Savings Vault'
+          : mutation.account_id.includes('online-vault') || mutation.account_id.includes('savings')
+          ? 'Online Vault'
           : 'Bank / UPI'
       );
+
+      const metaTag = formatTxMeta({
+        type: isPositive ? 'income' : 'expense',
+        from: targetAccount?.id ?? mutation.account_id,
+        fromName: accountDisplayName,
+      });
 
       const txPayload: any = {
         user_id: user.id,
         type: isPositive ? 'income' : 'expense',
         amount_paise: Math.abs(difference),
         merchant: `${accountDisplayName} Reconciliation`,
-        note: `Balance adjustment to ₹${(mutation.actual_balance_paise / 100).toFixed(2)}`,
+        note: `Balance adjustment to ₹${(mutation.actual_balance_paise / 100).toFixed(2)} ${metaTag}`,
         source: 'web',
         occurred_at: new Date().toISOString(),
       };
-      if (targetAccount?.id) {
+      if (targetAccount?.id && isUuidString(targetAccount.id)) {
         txPayload.account_id = targetAccount.id;
       }
 
@@ -800,13 +1014,42 @@ export async function POST(request: NextRequest) {
     let transactionType: 'income' | 'expense' | 'transfer' = mutation.type;
     let finalTransferTo = transferToAccountId;
 
+    const sourceAccount = availableAccounts.find((a) => a.id === targetAccountId);
+    const destAccount = availableAccounts.find((a) => a.id === transferToAccountId);
+    const sourceName = mutation.source_account_name || sourceAccount?.name || 'Bank / UPI';
+    const destName = mutation.transfer_to_account_name || destAccount?.name || null;
+
     // Flexible Transfer: If transferring from same account to same account,
     // convert into a direct deposit / top-up (type: 'income') so database check constraint passes
     // and account balance increases cleanly!
-    if (transactionType === 'transfer' && targetAccountId && targetAccountId === transferToAccountId) {
+    const isSameAccount = transactionType === 'transfer' && targetAccountId && targetAccountId === transferToAccountId;
+    if (isSameAccount) {
       transactionType = 'income';
       finalTransferTo = null;
     }
+
+    const metaTag = formatTxMeta({
+      type: isSameAccount ? 'income' : transactionType,
+      from: targetAccountId,
+      to: finalTransferTo,
+      fromName: sourceName,
+      toName: destName,
+    });
+
+    let merchant = mutation.merchant?.trim();
+    if (!merchant) {
+      if (isSameAccount) {
+        merchant = `${sourceName} Top-up`;
+      } else if (transactionType === 'transfer') {
+        merchant = `Transfer: ${sourceName} → ${destName}`;
+      } else if (transactionType === 'income') {
+        merchant = `${sourceName} Deposit`;
+      }
+    }
+
+    const fullNote = mutation.note?.trim()
+      ? `${mutation.note.trim()} ${metaTag}`
+      : metaTag;
 
     let categoryId: string | null = null;
     if (transactionType !== 'transfer' && mutation.category_name) {
@@ -836,8 +1079,8 @@ export async function POST(request: NextRequest) {
       account_id: targetAccountId,
       transfer_to_account_id: finalTransferTo,
       category_id: categoryId,
-      merchant: mutation.merchant || (transactionType === 'transfer' ? 'Transfer' : transactionType === 'income' ? 'Self Deposit / Top-up' : null),
-      note: mutation.note || null,
+      merchant,
+      note: fullNote,
       source: 'web',
       occurred_at: occurredAtIso,
     };

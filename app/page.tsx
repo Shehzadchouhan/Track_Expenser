@@ -154,10 +154,36 @@ export default function Home() {
           setSavingsUpiId(data.savingsUpiId);
         }
         if (Array.isArray(data.accounts) && data.accounts.length > 0) {
-          setAccounts(data.accounts);
+          setAccounts((prev) => {
+            // Apply server accounts, preserving optimistic delta of any in-flight manual transactions
+            const pendingManual = transactions.filter((t) => t.id.startsWith('manual-'));
+            if (pendingManual.length === 0) return data.accounts;
+
+            return data.accounts.map((acc: DashboardAccount) => {
+              let bal = acc.current_balance_paise;
+              pendingManual.forEach((m) => {
+                if (m.type === 'expense' && m.account_id === acc.id) bal -= m.amount_paise;
+                if (m.type === 'income' && m.account_id === acc.id) bal += m.amount_paise;
+                if (m.type === 'transfer') {
+                  if (m.account_id === acc.id && m.transfer_to_account_id === acc.id) bal += m.amount_paise;
+                  else {
+                    if (m.account_id === acc.id) bal -= m.amount_paise;
+                    if (m.transfer_to_account_id === acc.id) bal += m.amount_paise;
+                  }
+                }
+              });
+              return { ...acc, current_balance_paise: bal };
+            });
+          });
         }
         if (Array.isArray(data.transactions)) {
-          setTransactions(data.transactions);
+          setTransactions((prev) => {
+            const pendingManual = prev.filter((t) => t.id.startsWith('manual-'));
+            if (pendingManual.length === 0) return data.transactions;
+            const existingIds = new Set(data.transactions.map((t: any) => t.id));
+            const stillPending = pendingManual.filter((t) => !existingIds.has(t.id));
+            return [...stillPending, ...data.transactions];
+          });
         }
 
         // Cache to localStorage for instant mobile loading on future launches
@@ -575,6 +601,14 @@ export default function Home() {
   const handleReconcileAccount = async (accountId: string, actualRupees: number) => {
     const actual_balance_paise = Math.round(actualRupees * 100);
 
+    const updatedAccounts = accounts.map((acc) =>
+      acc.id === accountId ? { ...acc, current_balance_paise: actual_balance_paise } : acc
+    );
+    setAccounts(updatedAccounts);
+    try {
+      localStorage.setItem('track_expenser_accounts', JSON.stringify(updatedAccounts));
+    } catch {}
+
     if (isAuthenticated) {
       const res = await fetch('/api/dashboard', {
         method: 'POST',
@@ -590,13 +624,7 @@ export default function Home() {
         const err = await res.json();
         throw new Error(err.error || 'Failed to reconcile balance.');
       }
-      void loadDashboardData();
-    } else {
-      setAccounts((prev) =>
-        prev.map((acc) =>
-          acc.id === accountId ? { ...acc, current_balance_paise: actual_balance_paise } : acc
-        )
-      );
+      void loadDashboardData(true);
     }
   };
 
@@ -1010,9 +1038,11 @@ export default function Home() {
             action: 'add_transaction',
             type: data.type,
             amount_paise,
-            account_id: data.accountId,
-            transfer_to_account_id: data.transferToAccountId,
-            category_name: data.category,
+            account_id: sourceAccId,
+            transfer_to_account_id: destAccId,
+            source_account_name: fromAcc?.name,
+            transfer_to_account_name: toAcc?.name,
+            category_name: isSameAccount ? 'Deposit' : data.category,
             merchant: data.merchant,
             note: data.note,
             occurred_at: data.occurredAt,

@@ -134,10 +134,7 @@ export function AddTransactionModal({
     if (isOpen) {
       setType(initialType);
       setAmount(initialAmount || '');
-      setMerchant(
-        initialMerchant ||
-          (initialType === 'transfer' ? (isHindi ? 'ATM निकासी' : 'ATM Withdrawal') : '')
-      );
+      setMerchant(initialMerchant || '');
       setCategory(
         initialCategory ||
           (initialType === 'income'
@@ -333,6 +330,25 @@ export function AddTransactionModal({
 
     setLoading(true);
     setError(null);
+
+    const fromAcc = accounts.find((a) => a.id === fromAccountId);
+    const toAcc = accounts.find((a) => a.id === toAccountId);
+
+    let effectiveMerchant = merchant.trim();
+    if (!effectiveMerchant && type === 'transfer') {
+      if (fromAccountId === toAccountId) {
+        effectiveMerchant = isHindi ? `${fromAcc?.name ?? 'खाता'} में टॉप-अप` : `${fromAcc?.name ?? 'Account'} Top-up`;
+      } else if (toAcc?.purpose === 'savings') {
+        effectiveMerchant = isHindi ? `${toAcc.name} में जमा` : `Deposit to ${toAcc.name}`;
+      } else if (fromAcc?.purpose === 'savings') {
+        effectiveMerchant = isHindi ? `${fromAcc.name} से निकासी` : `Withdrawal from ${fromAcc.name}`;
+      } else if ((fromAcc?.type === 'bank' || fromAcc?.is_default) && toAcc?.type === 'cash') {
+        effectiveMerchant = isHindi ? 'ATM निकासी' : 'ATM Withdrawal';
+      } else {
+        effectiveMerchant = `Transfer: ${fromAcc?.name ?? 'From'} → ${toAcc?.name ?? 'To'}`;
+      }
+    }
+
     try {
       await onSubmit({
         type,
@@ -340,7 +356,7 @@ export function AddTransactionModal({
         accountId: type === 'transfer' ? fromAccountId : selectedAccountId,
         transferToAccountId: type === 'transfer' ? toAccountId : undefined,
         category: type === 'transfer' ? 'Transfer' : category,
-        merchant: merchant.trim() || undefined,
+        merchant: effectiveMerchant || undefined,
         note: note.trim() || undefined,
         occurredAt,
       });
