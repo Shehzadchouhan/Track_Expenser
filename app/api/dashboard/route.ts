@@ -199,6 +199,52 @@ export async function GET() {
       } catch {
         accounts = defaultFallbackAccounts;
       }
+    } else {
+      // Ensure existing DB users have both Online Vault and Cash Vault accounts
+      const hasOnlineVault = accounts.some(
+        (a) => a.purpose === 'savings' && (a.type === 'bank' || a.name.toLowerCase().includes('online'))
+      );
+      const hasCashVault = accounts.some(
+        (a) => a.purpose === 'savings' && (a.type === 'cash' || a.name.toLowerCase().includes('cash'))
+      );
+
+      const missingAccounts: any[] = [];
+      if (!hasOnlineVault) {
+        missingAccounts.push({
+          user_id: user.id,
+          name: 'Online Vault',
+          type: 'bank' as const,
+          purpose: 'savings' as const,
+          opening_balance_paise: 0,
+          target_goal_paise: 5000000,
+          is_default: false,
+        });
+      }
+      if (!hasCashVault) {
+        missingAccounts.push({
+          user_id: user.id,
+          name: 'Cash Vault',
+          type: 'cash' as const,
+          purpose: 'savings' as const,
+          opening_balance_paise: 0,
+          target_goal_paise: 2000000,
+          is_default: false,
+        });
+      }
+
+      if (missingAccounts.length > 0) {
+        try {
+          const { data: newVaults } = await admin
+            .from('accounts')
+            .insert(missingAccounts)
+            .select('id, name, type, purpose, opening_balance_paise, target_goal_paise, is_default');
+          if (newVaults && newVaults.length > 0) {
+            accounts = [...accounts, ...newVaults];
+          }
+        } catch (err) {
+          console.warn('[Dashboard API] Auto-seeding missing vaults error:', err);
+        }
+      }
     }
 
     if (!categories || categories.length === 0) {
@@ -259,10 +305,15 @@ export async function GET() {
       accountBalances.set(acc.id, Number(acc.opening_balance_paise));
     });
 
+    const bankAcc = (accounts ?? []).find((a) => a.is_default || (a.purpose === 'spending' && a.type === 'bank'));
+    const cashAcc = (accounts ?? []).find((a) => a.purpose === 'spending' && a.type === 'cash');
+    const onlineVaultAcc = (accounts ?? []).find((a) => a.purpose === 'savings' && (a.type === 'bank' || a.name.toLowerCase().includes('online')));
+    const cashVaultAcc = (accounts ?? []).find((a) => a.purpose === 'savings' && (a.type === 'cash' || a.name.toLowerCase().includes('cash')));
+
     let allUserTx: any[] = [];
     const allTxRes = await admin
       .from('transactions')
-      .select('type, amount_paise, account_id, transfer_to_account_id, merchant')
+      .select('type, amount_paise, account_id, transfer_to_account_id, merchant, note')
       .eq('user_id', user.id);
 
     if (allTxRes.error) {
@@ -278,13 +329,33 @@ export async function GET() {
     allUserTx.forEach((tx) => {
       const amt = Number(tx.amount_paise);
       let targetAccId = tx.account_id;
-      if (!targetAccId) {
-        if (tx.merchant?.toLowerCase().includes('cash')) {
-          targetAccId = 'default-cash';
-        } else if (tx.merchant?.toLowerCase().includes('vault') || tx.merchant?.toLowerCase().includes('savings')) {
-          targetAccId = 'default-online-vault';
+      let destAccId = tx.transfer_to_account_id;
+
+      const merchantOrNote = `${tx.merchant || ''} ${tx.note || ''}`.toLowerCase();
+
+      // If targetAccId is null or unknown, resolve resiliently
+      if (!targetAccId || !accountBalances.has(targetAccId)) {
+        if (targetAccId === 'default-cash-vault' || merchantOrNote.includes('cash vault') || (merchantOrNote.includes('vault') && merchantOrNote.includes('cash'))) {
+          targetAccId = cashVaultAcc?.id ?? 'default-cash-vault';
+        } else if (targetAccId === 'default-online-vault' || merchantOrNote.includes('online vault') || merchantOrNote.includes('vault') || merchantOrNote.includes('savings')) {
+          targetAccId = onlineVaultAcc?.id ?? 'default-online-vault';
+        } else if (targetAccId === 'default-cash' || merchantOrNote.includes('cash')) {
+          targetAccId = cashAcc?.id ?? 'default-cash';
         } else {
-          targetAccId = 'default-bank';
+          targetAccId = bankAcc?.id ?? 'default-bank';
+        }
+      }
+
+      // If destAccId is unknown in a transfer, resolve resiliently
+      if (tx.type === 'transfer' && (!destAccId || !accountBalances.has(destAccId))) {
+        if (destAccId === 'default-cash-vault' || merchantOrNote.includes('cash vault') || (merchantOrNote.includes('vault') && merchantOrNote.includes('cash'))) {
+          destAccId = cashVaultAcc?.id ?? 'default-cash-vault';
+        } else if (destAccId === 'default-online-vault' || merchantOrNote.includes('online vault') || merchantOrNote.includes('vault') || merchantOrNote.includes('savings')) {
+          destAccId = onlineVaultAcc?.id ?? 'default-online-vault';
+        } else if (destAccId === 'default-cash' || merchantOrNote.includes('cash') || merchantOrNote.includes('atm')) {
+          destAccId = cashAcc?.id ?? 'default-cash';
+        } else if (destAccId === 'default-bank') {
+          destAccId = bankAcc?.id ?? 'default-bank';
         }
       }
 
@@ -295,13 +366,19 @@ export async function GET() {
         const cur = accountBalances.get(targetAccId) ?? 0;
         accountBalances.set(targetAccId, cur - amt);
       } else if (tx.type === 'transfer') {
-        if (targetAccId) {
-          const curFrom = accountBalances.get(targetAccId) ?? 0;
-          accountBalances.set(targetAccId, curFrom - amt);
-        }
-        if (tx.transfer_to_account_id) {
-          const curTo = accountBalances.get(tx.transfer_to_account_id) ?? 0;
-          accountBalances.set(tx.transfer_to_account_id, curTo + amt);
+        if (targetAccId && destAccId && targetAccId === destAccId) {
+          // Same source to same destination transfer: top-up / deposit!
+          const cur = accountBalances.get(targetAccId) ?? 0;
+          accountBalances.set(targetAccId, cur + amt);
+        } else {
+          if (targetAccId) {
+            const curFrom = accountBalances.get(targetAccId) ?? 0;
+            accountBalances.set(targetAccId, curFrom - amt);
+          }
+          if (destAccId) {
+            const curTo = accountBalances.get(destAccId) ?? 0;
+            accountBalances.set(destAccId, curTo + amt);
+          }
         }
       }
     });
@@ -610,27 +687,83 @@ export async function POST(request: NextRequest) {
     }
 
     // Default: add_transaction
-    let targetAccountId = isUuid(mutation.account_id) ? mutation.account_id : null;
-    let transferToAccountId = (mutation.type === 'transfer' && isUuid(mutation.transfer_to_account_id))
-      ? mutation.transfer_to_account_id
-      : null;
+    let { data: userAccounts } = await admin
+      .from('accounts')
+      .select('id, name, type, purpose, is_default')
+      .eq('user_id', user.id);
 
-    if (!targetAccountId && mutation.account_id && !mutation.account_id.startsWith('default-')) {
+    // If user has no accounts yet in DB, ensure core accounts exist
+    if ((!userAccounts || userAccounts.length === 0) && typeof admin.from('accounts')?.insert === 'function') {
       try {
-        const { data: defaultAcc } = await admin
+        const { data: seeded } = await admin
           .from('accounts')
-          .select('id')
-          .eq('user_id', user.id)
-          .eq('is_default', true)
-          .maybeSingle();
-        targetAccountId = defaultAcc?.id ?? null;
-      } catch {
-        targetAccountId = null;
+          .insert([
+            { user_id: user.id, name: 'Bank / UPI', type: 'bank', purpose: 'spending', opening_balance_paise: 0, is_default: true },
+            { user_id: user.id, name: 'Cash', type: 'cash', purpose: 'spending', opening_balance_paise: 0, is_default: false },
+            { user_id: user.id, name: 'Online Vault', type: 'bank', purpose: 'savings', opening_balance_paise: 0, target_goal_paise: 5000000, is_default: false },
+            { user_id: user.id, name: 'Cash Vault', type: 'cash', purpose: 'savings', opening_balance_paise: 0, target_goal_paise: 2000000, is_default: false },
+          ])
+          .select('id, name, type, purpose, is_default');
+        if (seeded && seeded.length > 0) {
+          userAccounts = seeded;
+        }
+      } catch (err) {
+        console.warn('[Dashboard API] Auto-seeding in add_transaction warning:', err);
       }
     }
 
+    const availableAccounts = (userAccounts && userAccounts.length > 0) ? userAccounts : [
+      { id: 'default-bank', name: 'Bank / UPI', type: 'bank', purpose: 'spending', is_default: true },
+      { id: 'default-cash', name: 'Cash', type: 'cash', purpose: 'spending', is_default: false },
+      { id: 'default-online-vault', name: 'Online Vault', type: 'bank', purpose: 'savings', is_default: false },
+      { id: 'default-cash-vault', name: 'Cash Vault', type: 'cash', purpose: 'savings', is_default: false },
+    ];
+
+    const resolveAccountId = (accId?: string | null): string | null => {
+      if (!accId || availableAccounts.length === 0) return null;
+      if (isUuid(accId)) {
+        const found = availableAccounts.find((a) => a.id === accId);
+        if (found) return found.id;
+      }
+      const lower = accId.toLowerCase();
+      if (lower.includes('cash-vault') || (lower.includes('vault') && lower.includes('cash')) || lower === 'cash vault') {
+        const acc = availableAccounts.find((a) => a.purpose === 'savings' && (a.type === 'cash' || a.name.toLowerCase().includes('cash')));
+        if (acc) return acc.id;
+      }
+      if (lower.includes('online-vault') || (lower.includes('vault') && lower.includes('online')) || lower === 'online vault' || lower.includes('savings')) {
+        const acc = availableAccounts.find((a) => a.purpose === 'savings' && (a.type === 'bank' || a.name.toLowerCase().includes('online') || a.name.toLowerCase().includes('savings')));
+        if (acc) return acc.id;
+      }
+      if (lower.includes('cash')) {
+        const acc = availableAccounts.find((a) => a.purpose === 'spending' && a.type === 'cash');
+        if (acc) return acc.id;
+      }
+      if (lower.includes('bank') || lower.includes('upi') || lower.includes('default')) {
+        const acc = availableAccounts.find((a) => a.is_default || (a.purpose === 'spending' && a.type === 'bank'));
+        if (acc) return acc.id;
+      }
+      const named = availableAccounts.find((a) => a.name.toLowerCase() === lower);
+      if (named) return named.id;
+
+      return availableAccounts.find((a) => a.is_default)?.id ?? availableAccounts[0]?.id ?? null;
+    };
+
+    let targetAccountId = resolveAccountId(mutation.account_id);
+    let transferToAccountId = mutation.type === 'transfer' ? resolveAccountId(mutation.transfer_to_account_id) : null;
+
+    let transactionType: 'income' | 'expense' | 'transfer' = mutation.type;
+    let finalTransferTo = transferToAccountId;
+
+    // Flexible Transfer: If transferring from same account to same account,
+    // convert into a direct deposit / top-up (type: 'income') so database check constraint passes
+    // and account balance increases cleanly!
+    if (transactionType === 'transfer' && targetAccountId && targetAccountId === transferToAccountId) {
+      transactionType = 'income';
+      finalTransferTo = null;
+    }
+
     let categoryId: string | null = null;
-    if (mutation.type !== 'transfer' && mutation.category_name) {
+    if (transactionType !== 'transfer' && mutation.category_name) {
       const { data: categories } = await admin
         .from('categories')
         .select('id, name')
@@ -652,12 +785,12 @@ export async function POST(request: NextRequest) {
 
     const txPayload: any = {
       user_id: user.id,
-      type: mutation.type,
+      type: transactionType,
       amount_paise: mutation.amount_paise,
       account_id: targetAccountId,
-      transfer_to_account_id: transferToAccountId,
+      transfer_to_account_id: finalTransferTo,
       category_id: categoryId,
-      merchant: mutation.merchant || null,
+      merchant: mutation.merchant || (transactionType === 'transfer' ? 'Transfer' : transactionType === 'income' ? 'Self Deposit / Top-up' : null),
       note: mutation.note || null,
       source: 'web',
       occurred_at: occurredAtIso,

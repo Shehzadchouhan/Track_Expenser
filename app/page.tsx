@@ -911,18 +911,22 @@ export default function Home() {
     const fromAcc = accounts.find((a) => a.id === data.accountId) || accounts[0];
     const toAcc = data.transferToAccountId ? accounts.find((a) => a.id === data.transferToAccountId) : null;
 
+    const sourceAccId = data.accountId || fromAcc?.id;
+    const destAccId = data.transferToAccountId || toAcc?.id;
+    const isSameAccount = data.type === 'transfer' && sourceAccId && destAccId && sourceAccId === destAccId;
+
     const newTx: DisplayTransaction = {
       id: `manual-${Date.now()}`,
-      type: data.type,
+      type: isSameAccount ? 'income' : data.type,
       amount_paise,
-      account_id: data.accountId || fromAcc?.id,
+      account_id: sourceAccId,
       account_name: fromAcc?.name ?? 'Bank / UPI',
-      transfer_to_account_id: data.transferToAccountId || null,
-      transfer_to_account_name: toAcc?.name || null,
-      merchant: data.merchant || null,
+      transfer_to_account_id: isSameAccount ? null : destAccId || null,
+      transfer_to_account_name: isSameAccount ? null : toAcc?.name || null,
+      merchant: data.merchant || (isSameAccount ? 'Self Deposit / Top-up' : null),
       note: data.note || null,
-      category_name: data.type === 'transfer' ? 'Transfer' : data.category || 'General',
-      category_color: data.type === 'transfer' ? '#3B82F6' : cat?.color || '#64748B',
+      category_name: isSameAccount ? 'Deposit' : data.type === 'transfer' ? 'Transfer' : data.category || 'General',
+      category_color: isSameAccount ? '#10B981' : data.type === 'transfer' ? '#3B82F6' : cat?.color || '#64748B',
       source: 'web',
       occurred_at: data.occurredAt ?? new Date().toISOString(),
     };
@@ -932,7 +936,6 @@ export default function Home() {
     setTransactions(updatedTransactions);
 
     // 2. Optimistically update account balances in state immediately
-    const sourceAccId = data.accountId || fromAcc?.id;
     const updatedAccounts = accounts.map((acc) => {
       let bal = acc.current_balance_paise;
       if (data.type === 'expense' && acc.id === sourceAccId) {
@@ -940,10 +943,18 @@ export default function Home() {
       } else if (data.type === 'income' && acc.id === sourceAccId) {
         bal += amount_paise;
       } else if (data.type === 'transfer') {
-        if (acc.id === sourceAccId) {
-          bal -= amount_paise;
-        } else if (acc.id === data.transferToAccountId) {
-          bal += amount_paise;
+        if (isSameAccount) {
+          // Flexible transfer: transferring into the same account directly tops it up!
+          if (acc.id === sourceAccId) {
+            bal += amount_paise;
+          }
+        } else {
+          if (acc.id === sourceAccId) {
+            bal -= amount_paise;
+          }
+          if (acc.id === destAccId) {
+            bal += amount_paise;
+          }
         }
       }
       return { ...acc, current_balance_paise: bal };

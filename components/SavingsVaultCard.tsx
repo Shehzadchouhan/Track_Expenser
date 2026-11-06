@@ -132,9 +132,9 @@ export function SavingsVaultCard({
       return;
     }
 
-    const spendingAcc = spendingAccounts.find((a) => a.id === selectedSourceAccountId) ?? defaultSpendingAccount;
-    if (!spendingAcc) {
-      showFeedback(isHindi ? 'कोई खर्च खाता नहीं मिला' : 'No spending account found', true);
+    const sourceAcc = accounts.find((a) => a.id === selectedSourceAccountId) ?? spendingAccounts[0] ?? accounts[0];
+    if (!sourceAcc) {
+      showFeedback(isHindi ? 'कोई खाता नहीं मिला' : 'No account found', true);
       return;
     }
 
@@ -142,7 +142,7 @@ export function SavingsVaultCard({
     try {
       if (transferMode === 'deposit') {
         await onTransfer(
-          spendingAcc.id,
+          sourceAcc.id,
           activeTransferAccount.id,
           amount,
           `Deposit to ${activeTransferAccount.name}`
@@ -155,14 +155,14 @@ export function SavingsVaultCard({
       } else {
         await onTransfer(
           activeTransferAccount.id,
-          spendingAcc.id,
+          sourceAcc.id,
           amount,
           `Withdrawal from ${activeTransferAccount.name}`
         );
         showFeedback(
           isHindi
-            ? `₹${amount} को ${spendingAcc.name} में निकाला गया!`
-            : `₹${amount} withdrawn to ${spendingAcc.name}!`
+            ? `₹${amount} को ${sourceAcc.name} में निकाला गया!`
+            : `₹${amount} withdrawn to ${sourceAcc.name}!`
         );
       }
       setActiveTransferAccount(null);
@@ -631,6 +631,11 @@ export function SavingsVaultCard({
                         setActiveTransferAccount(acc);
                         setTransferMode('deposit');
                         setTransferAmountInput('500');
+                        const isCashVault = acc.type === 'cash' || acc.name.toLowerCase().includes('cash');
+                        const defaultSrc = isCashVault
+                          ? accounts.find((a) => a.type === 'cash')
+                          : accounts.find((a) => a.type === 'bank' || a.is_default);
+                        setSelectedSourceAccountId(defaultSrc?.id ?? accounts[0]?.id ?? '');
                       }}
                       className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-400 transition hover:text-emerald-300"
                     >
@@ -644,6 +649,11 @@ export function SavingsVaultCard({
                         setActiveTransferAccount(acc);
                         setTransferMode('withdraw');
                         setTransferAmountInput('500');
+                        const isCashVault = acc.type === 'cash' || acc.name.toLowerCase().includes('cash');
+                        const defaultDest = isCashVault
+                          ? accounts.find((a) => a.type === 'cash')
+                          : accounts.find((a) => a.type === 'bank' || a.is_default);
+                        setSelectedSourceAccountId(defaultDest?.id ?? accounts[0]?.id ?? '');
                       }}
                       className="inline-flex items-center gap-1 text-xs font-semibold text-zinc-400 transition hover:text-zinc-200"
                     >
@@ -690,22 +700,29 @@ export function SavingsVaultCard({
                   {transferMode === 'deposit'
                     ? isHindi
                       ? 'किस खाते से निकालना है:'
-                      : 'Transfer From Spending Account:'
+                      : 'Transfer From Account:'
                     : isHindi
                     ? 'किस खाते में भेजना है:'
-                    : 'Transfer To Spending Account:'}
+                    : 'Transfer To Account:'}
                 </label>
                 <select
                   value={selectedSourceAccountId}
                   onChange={(e) => setSelectedSourceAccountId(e.target.value)}
                   className="mt-1.5 w-full rounded-xl border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-xs text-zinc-100 focus:border-emerald-500 focus:outline-hidden"
                 >
-                  {spendingAccounts.map((s) => (
+                  {accounts.map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.name} ({formatINR(s.current_balance_paise, { showPaise: false })})
+                      {s.name} ({s.purpose === 'savings' ? (isHindi ? 'तिजोरी' : 'Vault') : (isHindi ? 'खर्च' : 'Spending')}) - {formatINR(s.current_balance_paise, { showPaise: false })}
                     </option>
                   ))}
                 </select>
+                {selectedSourceAccountId === activeTransferAccount.id && (
+                  <p className="mt-1 text-[11px] font-medium text-emerald-400">
+                    {isHindi
+                      ? '✨ समान खाते में ट्रांसफर (सीधा बैलेंस जोड़ना / टॉप-अप)'
+                      : '✨ Same account transfer (direct deposit / top-up)'}
+                  </p>
+                )}
               </div>
 
               <div>

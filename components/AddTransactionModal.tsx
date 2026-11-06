@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ImagePlus, LoaderCircle, Mic, PlusCircle, X, ArrowRightLeft, Landmark, Banknote } from 'lucide-react';
+import { ImagePlus, LoaderCircle, Mic, PlusCircle, X, ArrowRightLeft, Landmark, Banknote, Lock } from 'lucide-react';
 import Image from 'next/image';
 import { DEFAULT_CATEGORIES } from '@/lib/constants';
 import { categoryLabel, type AppLanguage } from '@/lib/i18n';
@@ -331,15 +331,6 @@ export function AddTransactionModal({
       return;
     }
 
-    if (type === 'transfer' && fromAccountId === toAccountId) {
-      setError(
-        isHindi
-          ? 'भेजने और पाने वाला खाता अलग-अलग होना चाहिए।'
-          : 'Source and destination accounts must be different.'
-      );
-      return;
-    }
-
     setLoading(true);
     setError(null);
     try {
@@ -464,13 +455,13 @@ export function AddTransactionModal({
 
           {/* Transfer Routing Selectors */}
           {type === 'transfer' ? (
-            <div className="space-y-3 rounded-2xl border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900/40 dark:bg-blue-950/20">
-              <div className="flex items-center gap-2 text-xs font-semibold text-blue-800 dark:text-blue-300">
-                <ArrowRightLeft className="h-4 w-4" />
+            <div className="space-y-3 rounded-2xl border border-blue-200 bg-blue-50/60 p-4 dark:border-blue-900/60 dark:bg-blue-950/30">
+              <div className="flex items-center gap-2 text-xs font-bold text-blue-900 dark:text-blue-200">
+                <ArrowRightLeft className="h-4 w-4 text-blue-600 dark:text-blue-400" />
                 <span>{isHindi ? 'खातों के बीच ट्रांसफर' : 'Between Accounts Transfer'}</span>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
                   <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-400">
                     {isHindi ? 'किस खाते से:' : 'From:'}
                   </label>
@@ -480,11 +471,27 @@ export function AddTransactionModal({
                     className="mt-1 w-full rounded-xl border border-zinc-200 bg-white p-2 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-800"
                   >
                     {accounts.map((a) => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({a.purpose === 'savings' ? (isHindi ? 'तिजोरी' : 'Vault') : a.type})
+                      </option>
                     ))}
                   </select>
                 </div>
-                <div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const temp = fromAccountId;
+                    setFromAccountId(toAccountId);
+                    setToAccountId(temp);
+                  }}
+                  title={isHindi ? 'खाते आपस में बदलें (Swap)' : 'Swap Source & Destination'}
+                  className="mt-5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-200 bg-white hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-700 transition active:scale-95 shadow-xs"
+                >
+                  <ArrowRightLeft className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                </button>
+
+                <div className="flex-1">
                   <label className="block text-[11px] font-semibold text-zinc-600 dark:text-zinc-400">
                     {isHindi ? 'किस खाते में:' : 'To:'}
                   </label>
@@ -494,15 +501,26 @@ export function AddTransactionModal({
                     className="mt-1 w-full rounded-xl border border-zinc-200 bg-white p-2 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-800"
                   >
                     {accounts.map((a) => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({a.purpose === 'savings' ? (isHindi ? 'तिजोरी' : 'Vault') : a.type})
+                      </option>
                     ))}
                   </select>
                 </div>
               </div>
+
+              {fromAccountId === toAccountId && (
+                <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                  {isHindi
+                    ? '✨ समान खाते में ट्रांसफर: यह इस खाते में सीधे टॉप-अप / बैलेंस जोड़ेगा।'
+                    : '✨ Same account transfer: This directly tops up / deposits balance into this account.'}
+                </p>
+              )}
+
               <p className="text-[11px] text-blue-700/80 dark:text-blue-300/80">
                 {isHindi
-                  ? '💡 ट्रांसफर से रोज का बजट (Safe-to-Spend) प्रभावित नहीं होता।'
-                  : '💡 Transfers only move money between accounts and do not reduce Safe-to-Spend.'}
+                  ? '💡 ट्रांसफर से रोज का खर्च बजट (Safe-to-Spend) प्रभावित नहीं होता।'
+                  : '💡 Transfers move money between accounts without reducing Safe-to-Spend.'}
               </p>
             </div>
           ) : (
@@ -514,99 +532,87 @@ export function AddTransactionModal({
                     : (isHindi ? 'कहाँ से खर्च हुआ?' : 'Spent From:')}
                 </label>
                 <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                  {isHindi ? 'ऑनलाइन व नकद अलग-अलग' : 'Separated Balances'}
+                  {isHindi ? 'खाता चुनें' : 'Select Account'}
                 </span>
               </div>
 
-              {/* 2 Prominent Interactive Account Tiles: Online vs Cash */}
-              <div className="mt-2 grid grid-cols-2 gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (defaultBank) {
-                      setSelectedAccountId(defaultBank.id);
-                      if (type === 'income' && category === 'Cash Deposit') {
-                        setCategory('Online Deposit');
-                      }
-                    }
-                  }}
-                  className={`flex items-center gap-3 rounded-2xl border-2 p-3 text-left transition ${
-                    selectedAccountId === defaultBank?.id || (!selectedAccountId && defaultBank)
-                      ? 'border-blue-600 bg-blue-50/90 shadow-xs ring-2 ring-blue-500/20 dark:border-blue-500 dark:bg-blue-950/40'
-                      : 'border-zinc-200 bg-zinc-50/70 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-800/60'
-                  }`}
-                >
-                  <div
-                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
-                      selectedAccountId === defaultBank?.id || (!selectedAccountId && defaultBank)
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400'
-                    }`}
-                  >
-                    <Landmark className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <p
-                      className={`text-xs font-bold leading-tight ${
-                        selectedAccountId === defaultBank?.id || (!selectedAccountId && defaultBank)
-                          ? 'text-blue-950 dark:text-blue-100'
-                          : 'text-zinc-700 dark:text-zinc-300'
-                      }`}
-                    >
-                      {isHindi ? 'बैंक / UPI (Online)' : 'Bank / UPI (Online)'}
-                    </p>
-                    <p className="truncate text-[10px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-                      GPay, PhonePe, Card
-                    </p>
-                  </div>
-                </button>
+              {/* All Accounts Available for Selection (Spending & Vaults) */}
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {accounts.map((acc) => {
+                  const isSelected = selectedAccountId === acc.id;
+                  const isVault = acc.purpose === 'savings';
+                  const isCash = acc.type === 'cash' || acc.name.toLowerCase().includes('cash');
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (defaultCash) {
-                      setSelectedAccountId(defaultCash.id);
-                      if (type === 'income' && category === 'Online Deposit') {
-                        setCategory('Cash Deposit');
-                      }
-                    }
-                  }}
-                  className={`flex items-center gap-3 rounded-2xl border-2 p-3 text-left transition ${
-                    selectedAccountId === defaultCash?.id
-                      ? 'border-amber-600 bg-amber-50/90 shadow-xs ring-2 ring-amber-500/20 dark:border-amber-500 dark:bg-amber-950/40'
-                      : 'border-zinc-200 bg-zinc-50/70 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-800/60'
-                  }`}
-                >
-                  <div
-                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
-                      selectedAccountId === defaultCash?.id
-                        ? 'bg-amber-600 text-white'
-                        : 'bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400'
-                    }`}
-                  >
-                    <Banknote className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <p
-                      className={`text-xs font-bold leading-tight ${
-                        selectedAccountId === defaultCash?.id
-                          ? 'text-amber-950 dark:text-amber-100'
-                          : 'text-zinc-700 dark:text-zinc-300'
+                  return (
+                    <button
+                      key={acc.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedAccountId(acc.id);
+                        if (type === 'income') {
+                          if (isCash) {
+                            setCategory('Cash Deposit');
+                          } else {
+                            setCategory('Online Deposit');
+                          }
+                        }
+                      }}
+                      className={`flex items-center gap-2.5 rounded-2xl border-2 p-2.5 text-left transition ${
+                        isSelected
+                          ? isVault
+                            ? 'border-emerald-600 bg-emerald-50/90 shadow-xs ring-2 ring-emerald-500/20 dark:border-emerald-500 dark:bg-emerald-950/40'
+                            : isCash
+                            ? 'border-amber-600 bg-amber-50/90 shadow-xs ring-2 ring-amber-500/20 dark:border-amber-500 dark:bg-amber-950/40'
+                            : 'border-blue-600 bg-blue-50/90 shadow-xs ring-2 ring-blue-500/20 dark:border-blue-500 dark:bg-blue-950/40'
+                          : 'border-zinc-200 bg-zinc-50/70 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-800/60'
                       }`}
                     >
-                      {isHindi ? 'नकद (Cash in Hand)' : 'Cash (In Hand)'}
-                    </p>
-                    <p className="truncate text-[10px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-                      Wallet / Pocket Cash
-                    </p>
-                  </div>
-                </button>
+                      <div
+                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${
+                          isSelected
+                            ? isVault
+                              ? 'bg-emerald-600 text-white'
+                              : isCash
+                              ? 'bg-amber-600 text-white'
+                              : 'bg-blue-600 text-white'
+                            : 'bg-zinc-200 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400'
+                        }`}
+                      >
+                        {isVault ? (
+                          <Lock className="h-4 w-4" />
+                        ) : isCash ? (
+                          <Banknote className="h-4 w-4" />
+                        ) : (
+                          <Landmark className="h-4 w-4" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <p
+                          className={`text-xs font-bold leading-tight truncate ${
+                            isSelected
+                              ? 'text-zinc-900 dark:text-zinc-100'
+                              : 'text-zinc-700 dark:text-zinc-300'
+                          }`}
+                        >
+                          {acc.name}
+                        </p>
+                        <p className="truncate text-[10px] text-zinc-500 dark:text-zinc-400">
+                          {isVault ? (isHindi ? 'तिजोरी' : 'Vault') : isCash ? (isHindi ? 'नकद' : 'Cash') : 'Bank / Online'}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
 
               {/* Real-time Account impact helper note */}
               <div className="mt-2 flex items-center gap-1.5 rounded-xl bg-zinc-100/70 px-3 py-1.5 text-[11px] text-zinc-600 dark:bg-zinc-800/70 dark:text-zinc-300">
                 <span>
-                  {selectedAccountId === defaultCash?.id
+                  {accounts.find((a) => a.id === selectedAccountId)?.purpose === 'savings'
+                    ? type === 'income'
+                      ? (isHindi ? '🔒 यह पैसा आपकी तिजोरी (बचत) में सुरक्षित जमा होगा।' : '🔒 This money will be safely locked into your Savings Vault.')
+                      : (isHindi ? '🔒 यह खर्च आपकी तिजोरी (बचत) से कटेगा।' : '🔒 This will be deducted from your Savings Vault.')
+                    : (selectedAccountId === defaultCash?.id || accounts.find((a) => a.id === selectedAccountId)?.type === 'cash')
                     ? type === 'income'
                       ? (isHindi ? '💵 यह पैसा आपके "नकद (हाथ में)" बैलेंस में जुड़ेगा।' : '💵 This will add balance to your Cash in Hand.')
                       : (isHindi ? '💵 यह खर्च आपके "नकद (हाथ में)" बैलेंस से कटेगा।' : '💵 This will be deducted from your Cash in Hand.')
