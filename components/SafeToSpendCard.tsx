@@ -160,7 +160,7 @@ export function SafeToSpendCard({ pulse, onUpdateBudget, language }: SafeToSpend
               type="number"
               value={budgetInput}
               onChange={(e) => setBudgetInput(e.target.value)}
-              className="w-24 rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+              className="w-28 rounded-xl border-2 border-zinc-400 bg-white px-3 py-1.5 text-sm font-bold text-zinc-900 focus:border-emerald-600 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50"
               placeholder={isHindi ? '₹ रकम' : '₹ amount'}
             />
             <button

@@ -484,21 +484,21 @@ export function SavingsVaultCard({
               value={upiInput}
               onChange={(e) => setUpiInput(e.target.value)}
               placeholder="e.g. yourname@okhdfcbank"
-              className="flex-1 rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:placeholder-zinc-500"
+              className="flex-1 rounded-xl border-2 border-zinc-300 bg-white px-3.5 py-2.5 text-sm font-semibold text-zinc-900 placeholder-zinc-400 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-500"
               autoFocus
             />
             <div className="flex items-center gap-2">
               <button
                 type="submit"
                 disabled={loading}
-                className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-emerald-500 disabled:opacity-50"
+                className="rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-emerald-500 disabled:opacity-50"
               >
                 {loading ? '...' : isHindi ? 'सुरक्षित करें' : 'Save UPI ID'}
               </button>
               <button
                 type="button"
                 onClick={() => setIsEditingUpi(false)}
-                className="rounded-xl bg-zinc-200 px-3 py-2 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-600"
+                className="rounded-xl bg-zinc-200 px-3 py-2.5 text-xs font-semibold text-zinc-700 transition hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-600"
               >
                 {isHindi ? 'रद्द' : 'Cancel'}
               </button>
@@ -518,10 +518,10 @@ export function SavingsVaultCard({
                   setQuickSaveAmount(amt);
                   setCustomSaveAmount('');
                 }}
-                className={`rounded-xl px-3.5 py-1.5 text-xs font-bold transition ${
+                className={`rounded-xl px-3.5 py-2 text-xs font-bold transition ${
                   isSelected
                     ? 'bg-emerald-600 text-white shadow-xs'
-                    : 'border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
+                    : 'border-2 border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
                 }`}
               >
                 + ₹{amt}
@@ -530,7 +530,7 @@ export function SavingsVaultCard({
           })}
 
           <div className="relative">
-            <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-2.5 text-xs font-bold text-zinc-500 dark:text-zinc-400">
+            <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-xs font-bold text-zinc-500 dark:text-zinc-400">
               ₹
             </span>
             <input
@@ -538,7 +538,7 @@ export function SavingsVaultCard({
               placeholder={isHindi ? 'अन्य राशि' : 'Custom'}
               value={customSaveAmount}
               onChange={(e) => setCustomSaveAmount(e.target.value)}
-              className="w-24 rounded-xl border border-zinc-300 bg-white py-1.5 pl-6 pr-2.5 text-xs font-semibold text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+              className="w-28 rounded-xl border-2 border-zinc-300 bg-white py-2 pl-7 pr-3 text-sm font-bold text-zinc-900 placeholder-zinc-400 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50"
               min="1"
             />
           </div>
@@ -596,7 +596,7 @@ export function SavingsVaultCard({
             </div>
             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
+                <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300">
                   {isHindi ? 'नाम (उदा. इमरजेंसी, ट्रिप)' : 'Goal Name (e.g. Emergency, Trip)'}
                 </label>
                 <input
@@ -605,11 +605,11 @@ export function SavingsVaultCard({
                   value={newGoalName}
                   onChange={(e) => setNewGoalName(e.target.value)}
                   placeholder="e.g. Vacation"
-                  className="mt-1 w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-900 focus:border-emerald-500 focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  className="mt-1.5 w-full rounded-xl border-2 border-zinc-300 bg-white px-3.5 py-2.5 text-sm font-semibold text-zinc-900 focus:border-emerald-600 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50"
                 />
               </div>
               <div>
-                <label className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
+                <label className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300">
                   {isHindi ? 'लक्ष्य राशि ₹ (वैकल्पिक)' : 'Target Amount ₹ (Optional)'}
                 </label>
                 <input
@@ -617,7 +617,7 @@ export function SavingsVaultCard({
                   value={newGoalTarget}
                   onChange={(e) => setNewGoalTarget(e.target.value)}
                   placeholder="e.g. 50000"
-                  className="mt-1 w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-900 focus:border-emerald-500 focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  className="mt-1.5 w-full rounded-xl border-2 border-zinc-300 bg-white px-3.5 py-2.5 text-sm font-semibold text-zinc-900 focus:border-emerald-600 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50"
                 />
               </div>
             </div>
@@ -823,7 +823,7 @@ export function SavingsVaultCard({
                 <select
                   value={selectedSourceAccountId}
                   onChange={(e) => setSelectedSourceAccountId(e.target.value)}
-                  className="mt-1.5 w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-xs text-zinc-900 focus:border-emerald-500 focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  className="mt-1.5 w-full rounded-xl border-2 border-zinc-300 bg-white px-3.5 py-2.5 text-sm font-bold text-zinc-900 focus:border-emerald-600 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50"
                 >
                   {accounts.map((s) => (
                     <option key={s.id} value={s.id}>
@@ -843,10 +843,10 @@ export function SavingsVaultCard({
                   min="1"
                   value={transferAmountInput}
                   onChange={(e) => setTransferAmountInput(e.target.value)}
-                  className={`mt-1.5 w-full rounded-xl border px-3 py-2.5 text-base font-bold text-zinc-900 focus:outline-hidden dark:text-zinc-100 ${
+                  className={`mt-1.5 w-full rounded-xl border-2 px-3.5 py-2.5 text-lg font-black text-zinc-900 focus:outline-hidden dark:text-zinc-50 ${
                     isVaultInsufficient
                       ? 'border-rose-500 bg-rose-50 dark:bg-rose-950/20 focus:border-rose-500'
-                      : 'border-zinc-300 bg-white focus:border-emerald-500 dark:border-zinc-700 dark:bg-zinc-800'
+                      : 'border-zinc-300 bg-white focus:border-emerald-600 dark:border-zinc-600 dark:bg-zinc-800'
                   }`}
                 />
               </div>
@@ -928,7 +928,7 @@ export function SavingsVaultCard({
                   value={reconcileRupeesInput}
                   onChange={(e) => setReconcileRupeesInput(e.target.value)}
                   placeholder="e.g. 5000"
-                  className="mt-1.5 w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm font-bold text-zinc-900 focus:border-emerald-500 focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  className="mt-1.5 w-full rounded-xl border-2 border-zinc-300 bg-white px-3.5 py-2.5 text-base font-black text-zinc-900 focus:border-emerald-600 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50"
                   autoFocus
                 />
               </div>
@@ -985,7 +985,7 @@ export function SavingsVaultCard({
                   value={goalAmountInput}
                   onChange={(e) => setGoalAmountInput(e.target.value)}
                   placeholder="e.g. 50000"
-                  className="mt-1.5 w-full rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-sm font-bold text-zinc-900 focus:border-emerald-500 focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  className="mt-1.5 w-full rounded-xl border-2 border-zinc-300 bg-white px-3.5 py-2.5 text-base font-bold text-zinc-900 focus:border-emerald-600 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50"
                 />
               </div>
 

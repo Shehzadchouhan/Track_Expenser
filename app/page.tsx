@@ -11,7 +11,6 @@ import { AuthModal } from '@/components/AuthModal';
 import { SafeToSpendCard } from '@/components/SafeToSpendCard';
 import { SavingsVaultCard } from '@/components/SavingsVaultCard';
 import { SpendingTrendChart } from '@/components/SpendingTrendChart';
-import { WhatsAppLinkCard } from '@/components/WhatsAppLinkCard';
 import { calculateDailyBudgetPulse } from '@/lib/budget';
 import { DEFAULT_CATEGORIES } from '@/lib/constants';
 import { formatINR } from '@/lib/money';
@@ -133,7 +132,6 @@ export default function Home() {
   // Navigation & UI States
   const [activeTab, setActiveTab] = useState<'overview' | 'vaults' | 'transactions' | 'insights'>('overview');
   const [isInitialLoading, setIsInitialLoading] = useState(true);
-  const [linkedPhone, setLinkedPhone] = useState<string | null>(null);
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -342,11 +340,6 @@ export default function Home() {
       const savedCycle = localStorage.getItem('track_expenser_cycle');
       if (savedCycle && ['weekly', 'monthly', 'all'].includes(savedCycle)) {
         setTimeRange(savedCycle as 'weekly' | 'monthly' | 'all');
-      }
-
-      const savedPhone = localStorage.getItem('track_expenser_phone');
-      if (savedPhone) {
-        setLinkedPhone(savedPhone);
       }
     } catch (err) {
       console.warn('[Dashboard] Local storage restore error:', err);
@@ -571,29 +564,29 @@ export default function Home() {
 
   const handleUpdateBudget = async (newBudgetRupees: number) => {
     const paise = Math.round(newBudgetRupees * 100);
+    setMonthlyBudgetPaise(paise);
+
+    try {
+      const cached = localStorage.getItem('track_expenser_cached_dashboard');
+      if (cached) {
+        const base = JSON.parse(cached);
+        localStorage.setItem(
+          'track_expenser_cached_dashboard',
+          JSON.stringify({ ...base, monthlyBudgetPaise: paise })
+        );
+      }
+    } catch {}
 
     if (isAuthenticated) {
-      try {
-        const response = await fetch('/api/dashboard', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'update_budget',
-            monthlyBudgetPaise: paise,
-          }),
-        });
-        if (!response.ok) {
-          const result = await response.json();
-          throw new Error(result.error || 'Could not save the budget.');
-        }
-      } catch (error) {
-        console.error('[Dashboard] Failed to persist budget update:', error);
-        window.alert('Could not save the budget. Please try again.');
-        return;
-      }
+      void fetch('/api/dashboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_budget',
+          monthlyBudgetPaise: paise,
+        }),
+      }).catch((err) => console.warn('[Dashboard] Background budget update error:', err));
     }
-
-    setMonthlyBudgetPaise(paise);
   };
 
   const handleUpdateStartingBalance = async (newBalance: number) => {
@@ -635,7 +628,7 @@ export default function Home() {
     }
   };
 
-  // Reconcile account balance
+  // Reconcile account balance (instant local update + background sync)
   const handleReconcileAccount = async (accountId: string, actualRupees: number) => {
     const actual_balance_paise = Math.round(actualRupees * 100);
 
@@ -645,43 +638,58 @@ export default function Home() {
     setAccounts(updatedAccounts);
     try {
       localStorage.setItem('track_expenser_accounts', JSON.stringify(updatedAccounts));
+      const cached = localStorage.getItem('track_expenser_cached_dashboard');
+      if (cached) {
+        const base = JSON.parse(cached);
+        localStorage.setItem(
+          'track_expenser_cached_dashboard',
+          JSON.stringify({ ...base, accounts: updatedAccounts })
+        );
+      }
     } catch {}
 
     if (isAuthenticated) {
-      const res = await fetch('/api/dashboard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'reconcile_account',
-          account_id: accountId,
-          actual_balance_paise,
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to reconcile balance.');
-      }
-      void loadDashboardData(true);
+      void (async () => {
+        try {
+          await fetch('/api/dashboard', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'reconcile_account',
+              account_id: accountId,
+              actual_balance_paise,
+            }),
+          });
+        } catch (err) {
+          console.warn('[Dashboard] Background reconcile error:', err);
+        }
+      })();
     }
   };
 
   const handleUpdateSavingsUpi = async (upiId: string) => {
+    setSavingsUpiId(upiId || null);
+    try {
+      const cached = localStorage.getItem('track_expenser_cached_dashboard');
+      if (cached) {
+        const base = JSON.parse(cached);
+        localStorage.setItem(
+          'track_expenser_cached_dashboard',
+          JSON.stringify({ ...base, savingsUpiId: upiId || null })
+        );
+      }
+    } catch {}
+
     if (isAuthenticated) {
-      const res = await fetch('/api/dashboard', {
+      void fetch('/api/dashboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'update_savings_upi',
           savings_upi_id: upiId,
         }),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to update savings UPI ID');
-      }
+      }).catch((err) => console.warn('[Dashboard] Background UPI update error:', err));
     }
-    setSavingsUpiId(upiId || null);
   };
 
   const handleUpdateAccountGoal = async (accountId: string, targetGoalRupees: number | null) => {
@@ -1087,51 +1095,53 @@ export default function Home() {
       console.warn('[Dashboard] LocalStorage caching warning:', err);
     }
 
-    // 4. Background server sync if authenticated (without jittery full dashboard refetch!)
+    // 4. Background server sync if authenticated (instant return so modal closes at 0ms!)
     if (isAuthenticated) {
-      try {
-        const res = await fetch('/api/dashboard', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'add_transaction',
-            type: data.type,
-            amount_paise,
-            account_id: sourceAccId,
-            transfer_to_account_id: destAccId,
-            source_account_name: fromAcc?.name,
-            transfer_to_account_name: toAcc?.name,
-            category_name: isSameAccount ? 'Deposit' : data.category,
-            merchant: data.merchant,
-            note: data.note,
-            occurred_at: data.occurredAt,
-          }),
-        });
-        if (res.ok) {
-          const resData = await res.json();
-          if (resData.transaction?.id) {
-            setTransactions((prev) => {
-              const updated = prev.map((t) => (t.id === newTx.id ? { ...t, id: resData.transaction.id } : t));
-              try {
-                localStorage.setItem('track_expenser_transactions', JSON.stringify(updated));
-                const existingCached = localStorage.getItem('track_expenser_cached_dashboard');
-                if (existingCached) {
-                  const base = JSON.parse(existingCached);
-                  localStorage.setItem(
-                    'track_expenser_cached_dashboard',
-                    JSON.stringify({ ...base, transactions: updated })
-                  );
-                }
-              } catch {}
-              return updated;
-            });
+      void (async () => {
+        try {
+          const res = await fetch('/api/dashboard', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'add_transaction',
+              type: data.type,
+              amount_paise,
+              account_id: sourceAccId,
+              transfer_to_account_id: destAccId,
+              source_account_name: fromAcc?.name,
+              transfer_to_account_name: toAcc?.name,
+              category_name: isSameAccount ? 'Deposit' : data.category,
+              merchant: data.merchant,
+              note: data.note,
+              occurred_at: data.occurredAt,
+            }),
+          });
+          if (res.ok) {
+            const resData = await res.json();
+            if (resData.transaction?.id) {
+              setTransactions((prev) => {
+                const updated = prev.map((t) => (t.id === newTx.id ? { ...t, id: resData.transaction.id } : t));
+                try {
+                  localStorage.setItem('track_expenser_transactions', JSON.stringify(updated));
+                  const existingCached = localStorage.getItem('track_expenser_cached_dashboard');
+                  if (existingCached) {
+                    const base = JSON.parse(existingCached);
+                    localStorage.setItem(
+                      'track_expenser_cached_dashboard',
+                      JSON.stringify({ ...base, transactions: updated })
+                    );
+                  }
+                } catch {}
+                return updated;
+              });
+            }
+          } else {
+            console.warn('[Dashboard] Server rejected transaction sync:', res.status);
           }
-        } else {
-          console.warn('[Dashboard] Server rejected transaction sync:', res.status);
+        } catch (err) {
+          console.warn('[Dashboard] Network error during background transaction sync:', err);
         }
-      } catch (err) {
-        console.warn('[Dashboard] Network error during background transaction sync:', err);
-      }
+      })();
     }
   };
 
@@ -1763,19 +1773,6 @@ export default function Home() {
                     language={language}
                   />
                 </div>
-
-                {/* WhatsApp Bot Integration Card */}
-                <WhatsAppLinkCard
-                  isLinked={!!linkedPhone}
-                  linkedPhone={linkedPhone}
-                  onSuccess={(phone) => {
-                    setLinkedPhone(phone);
-                    try {
-                      localStorage.setItem('track_expenser_phone', phone);
-                    } catch {}
-                  }}
-                  language={language}
-                />
               </div>
             )}
           </>

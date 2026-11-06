@@ -192,7 +192,7 @@ export function TransactionFeed({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder={isHindi ? 'दुकानदार, नोट या खाता खोजें…' : 'Search merchant, note, or account...'}
-            className="w-full rounded-xl border border-zinc-200 bg-zinc-50/50 py-1.5 pl-9 pr-8 text-xs text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:bg-white focus:outline-hidden dark:border-zinc-800 dark:bg-zinc-800/40 dark:text-zinc-100 dark:focus:bg-zinc-800"
+            className="w-full rounded-xl border-2 border-zinc-300 bg-white py-2 pl-9 pr-8 text-sm font-semibold text-zinc-900 placeholder-zinc-400 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-500"
           />
           {searchQuery && (
             <button

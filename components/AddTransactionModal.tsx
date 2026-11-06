@@ -506,7 +506,7 @@ export function AddTransactionModal({
                   <select
                     value={fromAccountId}
                     onChange={(e) => setFromAccountId(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-zinc-200 bg-white p-2 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-800"
+                    className="mt-1.5 min-h-11 w-full rounded-xl border-2 border-zinc-300 bg-white p-2.5 text-xs sm:text-sm font-bold text-zinc-900 focus:border-emerald-600 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50"
                   >
                     {accounts.map((a) => (
                       <option key={a.id} value={a.id}>
@@ -524,7 +524,7 @@ export function AddTransactionModal({
                     setToAccountId(temp);
                   }}
                   title={isHindi ? 'खाते आपस में बदलें (Swap)' : 'Swap Source & Destination'}
-                  className="mt-5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-200 bg-white hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:bg-zinc-700 transition active:scale-95 shadow-xs"
+                  className="mt-5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border-2 border-zinc-300 bg-white hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800 dark:hover:bg-zinc-700 transition active:scale-95 shadow-xs"
                 >
                   <ArrowRightLeft className="h-4 w-4 text-blue-600 dark:text-blue-400" />
                 </button>
@@ -536,7 +536,7 @@ export function AddTransactionModal({
                   <select
                     value={toAccountId}
                     onChange={(e) => setToAccountId(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-zinc-200 bg-white p-2 text-xs font-semibold dark:border-zinc-700 dark:bg-zinc-800"
+                    className="mt-1.5 min-h-11 w-full rounded-xl border-2 border-zinc-300 bg-white p-2.5 text-xs sm:text-sm font-bold text-zinc-900 focus:border-emerald-600 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50"
                   >
                     {accounts.map((a) => (
                       <option key={a.id} value={a.id}>
@@ -668,17 +668,17 @@ export function AddTransactionModal({
 
           {/* Amount Input */}
           <div>
-            <label htmlFor="transaction-amount" className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+            <label htmlFor="transaction-amount" className="block text-xs font-bold text-zinc-800 dark:text-zinc-200">
               {isHindi ? 'राशि (रुपये)' : 'Amount (₹)'}
             </label>
             <div
-              className={`mt-1.5 flex items-center rounded-2xl border-2 px-4 focus-within:border-emerald-500 ${
+              className={`mt-1.5 flex items-center rounded-2xl border-2 px-4 transition-colors focus-within:border-emerald-600 focus-within:ring-2 focus-within:ring-emerald-500/20 ${
                 isInsufficient
-                  ? 'border-rose-500 bg-rose-50/40 dark:border-rose-600 dark:bg-rose-950/20'
-                  : 'border-zinc-300 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800'
+                  ? 'border-rose-500 bg-rose-50/50 dark:border-rose-600 dark:bg-rose-950/20'
+                  : 'border-zinc-300 bg-white dark:border-zinc-600 dark:bg-zinc-800'
               }`}
             >
-              <span className={`text-2xl font-bold ${isInsufficient ? 'text-rose-500' : 'text-zinc-500'}`}>₹</span>
+              <span className={`text-2xl font-black ${isInsufficient ? 'text-rose-500' : 'text-emerald-600 dark:text-emerald-400'}`}>₹</span>
               <input
                 id="transaction-amount"
                 type="number"
@@ -693,7 +693,7 @@ export function AddTransactionModal({
                   if (error) setError(null);
                 }}
                 placeholder="0"
-                className="min-h-14 w-full bg-transparent px-3 text-2xl font-bold text-zinc-900 outline-none dark:text-zinc-100"
+                className="min-h-14 w-full bg-transparent px-3 text-2xl sm:text-3xl font-black text-zinc-900 outline-none placeholder-zinc-400 dark:text-zinc-50 dark:placeholder-zinc-500"
               />
             </div>
             {isInsufficient && selectedAcc && (
@@ -715,7 +715,7 @@ export function AddTransactionModal({
 
           {/* Merchant / Description */}
           <div>
-            <label htmlFor="transaction-description" className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+            <label htmlFor="transaction-description" className="block text-xs font-bold text-zinc-800 dark:text-zinc-200">
               {type === 'transfer'
                 ? isHindi ? 'ट्रांसफर का विवरण' : 'Transfer purpose (e.g. ATM, Deposit)'
                 : isHindi ? 'दुकानदार / विवरण' : 'Merchant / Payee (e.g. Swiggy, Petrol)'}
@@ -725,8 +725,8 @@ export function AddTransactionModal({
               type="text"
               value={merchant}
               onChange={(event) => setMerchant(event.target.value)}
-              placeholder={type === 'transfer' ? 'ATM Cash Withdrawal' : 'Swiggy / Chai / Metro'}
-              className="mt-1.5 min-h-11 w-full rounded-xl border border-zinc-300 bg-zinc-50 px-4 text-sm font-medium text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:bg-white dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50"
+              placeholder={type === 'transfer' ? 'ATM Cash Withdrawal' : 'Swiggy / Chai / Petrol'}
+              className="mt-1.5 min-h-12 w-full rounded-2xl border-2 border-zinc-300 bg-white px-4 text-base font-semibold text-zinc-900 placeholder-zinc-400 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-500"
             />
           </div>
 
@@ -772,7 +772,7 @@ export function AddTransactionModal({
                     <select
                       value={category}
                       onChange={(event) => setCategory(event.target.value)}
-                      className="mt-1 min-h-10 w-full rounded-xl border border-zinc-300 bg-white px-3 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                      className="mt-1.5 min-h-11 w-full rounded-xl border-2 border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-900 focus:border-emerald-600 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50"
                     >
                       {categories.map((item) => (
                         <option key={item.name} value={item.name}>{categoryLabel(item.name, language)}</option>
@@ -780,7 +780,7 @@ export function AddTransactionModal({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                    <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                       {isHindi ? 'तारीख' : 'Date'}
                     </label>
                     <input
@@ -789,7 +789,7 @@ export function AddTransactionModal({
                       onChange={(event) =>
                         setOccurredAt(event.target.value ? new Date(event.target.value).toISOString() : undefined)
                       }
-                      className="mt-1 min-h-10 w-full rounded-xl border border-zinc-300 bg-white px-3 text-xs text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                      className="mt-1.5 min-h-11 w-full rounded-xl border-2 border-zinc-300 bg-white px-3 text-sm font-semibold text-zinc-900 focus:border-emerald-600 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50"
                     />
                   </div>
                 </div>

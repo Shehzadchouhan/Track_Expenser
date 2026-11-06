@@ -291,7 +291,7 @@ export function AuthModal({
                       ? 'उदा. 9876543210 या yourname@gmail.com'
                       : 'e.g. 9876543210 or yourname@gmail.com'
                   }
-                  className="w-full rounded-2xl border border-zinc-200 bg-white py-2.5 pl-10 pr-3.5 text-xs text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  className="w-full rounded-2xl border-2 border-zinc-300 bg-white py-3 pl-10 pr-3.5 text-sm sm:text-base font-semibold text-zinc-900 placeholder-zinc-400 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-500"
                 />
               </div>
             </div>
@@ -324,7 +324,7 @@ export function AuthModal({
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder={isHindi ? 'कम से कम 6 अक्षर' : 'At least 6 characters'}
-                  className="w-full rounded-2xl border border-zinc-200 bg-white py-2.5 pl-10 pr-10 text-xs text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  className="w-full rounded-2xl border-2 border-zinc-300 bg-white py-3 pl-10 pr-10 text-sm sm:text-base font-semibold text-zinc-900 placeholder-zinc-400 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-500"
                 />
                 <button
                   type="button"
@@ -398,7 +398,7 @@ export function AuthModal({
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   placeholder="yourname@gmail.com"
-                  className="w-full rounded-2xl border border-zinc-200 bg-white py-2.5 pl-10 pr-3.5 text-xs text-zinc-900 placeholder-zinc-400 focus:border-emerald-500 focus:outline-hidden dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100"
+                  className="w-full rounded-2xl border-2 border-zinc-300 bg-white py-3 pl-10 pr-3.5 text-sm sm:text-base font-semibold text-zinc-900 placeholder-zinc-400 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-500/20 focus:outline-hidden dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-500"
                 />
               </div>
               <p className="mt-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
