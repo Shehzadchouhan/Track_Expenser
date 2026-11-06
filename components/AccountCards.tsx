@@ -106,28 +106,28 @@ export function AccountCards({
       : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400';
 
     const titleText = isOnlineSpending
-      ? isHindi ? 'बैंक / UPI (ऑनलाइन)' : 'Bank / UPI (Online)'
+      ? 'Bank / UPI'
       : isCashSpending
-      ? isHindi ? 'नकद (हाथ में)' : 'Cash (In Hand)'
+      ? isHindi ? 'नकद (Cash)' : 'Cash in Hand'
       : isOnlineVault
-      ? isHindi ? 'ऑनलाइन वॉल्ट (बैंक बचत)' : 'Online Vault (Bank Savings)'
-      : isHindi ? 'कैश वॉल्ट (नकद बचत)' : 'Cash Vault (Cash Savings)';
+      ? isHindi ? 'ऑनलाइन वॉल्ट' : 'Online Vault'
+      : isHindi ? 'कैश वॉल्ट' : 'Cash Vault';
 
     const subtitleText = isOnlineSpending
-      ? isHindi ? 'GPay, PhonePe, कार्ड' : 'Daily UPI & Card spending'
+      ? isHindi ? 'UPI व कार्ड खर्च' : 'Daily UPI & Card'
       : isCashSpending
-      ? isHindi ? 'बटुआ व जेब का नकद' : 'Physical cash in pocket'
+      ? isHindi ? 'जेब का नकद' : 'Physical Cash'
       : isOnlineVault
-      ? isHindi ? 'बैंक में सुरक्षित डिजिटल बचत' : 'Digital reserve locked from daily budget'
-      : isHindi ? 'घर में रखी नकद बचत' : 'Physical cash reserve';
+      ? isHindi ? 'बैंक बचत' : 'Bank Reserve'
+      : isHindi ? 'नकद बचत' : 'Cash Reserve';
 
     const tagText = isOnlineSpending
-      ? isHindi ? 'UPI / बैंक' : 'UPI/Online'
+      ? 'UPI'
       : isCashSpending
-      ? isHindi ? 'बटुआ/जेब' : 'Pocket Cash'
+      ? 'Cash'
       : isOnlineVault
-      ? isHindi ? 'बैंक बचत' : 'Online Saved'
-      : isHindi ? 'नकद बचत' : 'Cash Saved';
+      ? isHindi ? 'बैंक बचत' : 'Online Vault'
+      : isHindi ? 'नकद बचत' : 'Cash Vault';
 
     return (
       <div
@@ -226,42 +226,37 @@ export function AccountCards({
 
   return (
     <div className="space-y-6">
-      {/* 1. Daily Spending Accounts (Online & Cash) */}
-      <div>
-        <div className="mb-3 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
-              {isHindi ? '💳 दैनिक खर्च खाते (Spending Accounts)' : '💳 Daily Spending Accounts'}
-            </h3>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              {isHindi ? 'ऑनलाइन (UPI) और नकद - रोज के खर्च के लिए' : 'Online (UPI) & Cash in pocket for daily expenses'}
-            </p>
+      {/* If only spending accounts are provided, render without extra redundant headers */}
+      {spendingAccounts.length > 0 && (
+        <div>
+          {savingsVaults.length > 0 && (
+            <div className="mb-2.5">
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                {isHindi ? 'खर्च खाते' : 'Spending Accounts'}
+              </h3>
+            </div>
+          )}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {spendingAccounts.map(renderAccountCard)}
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {spendingAccounts.map(renderAccountCard)}
-        </div>
-      </div>
+      )}
 
-      {/* 2. The Two Savings Vaults (Online Vault & Cash Vault) */}
-      <div>
-        <div className="mb-3 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-1.5">
-              <span>🏦 {isHindi ? 'दो बचत वॉल्ट (Two Savings Vaults)' : 'Two Savings Vaults'}</span>
-              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
-                {isHindi ? 'सुरक्षित पैसा' : 'Locked from daily budget'}
-              </span>
-            </h3>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              {isHindi ? 'ऑनलाइन बैंक बचत और नकद बचत - दोनों अलग-अलग सुरक्षित' : 'Online bank savings and cash savings kept strictly separate'}
-            </p>
+      {/* If savings vaults are provided */}
+      {savingsVaults.length > 0 && (
+        <div>
+          {spendingAccounts.length > 0 && (
+            <div className="mb-2.5">
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
+                {isHindi ? 'बचत तिजोरियां' : 'Savings Vaults'}
+              </h3>
+            </div>
+          )}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {savingsVaults.map(renderAccountCard)}
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {savingsVaults.map(renderAccountCard)}
-        </div>
-      </div>
+      )}
 
       {/* Reconcile Modal */}
       {activeReconcileAccount && (
@@ -286,8 +281,8 @@ export function AccountCards({
                 </h3>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
                   {isHindi
-                    ? 'वास्तविक राशि डालें ताकि ऐप और वास्तविक पैसे का सटीक मिलान रहे।'
-                    : 'Enter the actual amount in hand or bank to sync with reality.'}
+                    ? 'वास्तविक राशि दर्ज करें।'
+                    : 'Enter current actual balance.'}
                 </p>
               </div>
             </div>

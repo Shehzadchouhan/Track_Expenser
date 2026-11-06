@@ -38,7 +38,7 @@ export function SafeToSpendCard({ pulse, onUpdateBudget, language }: SafeToSpend
       : 0;
 
   return (
-    <div className="relative overflow-hidden rounded-3xl border border-zinc-200 bg-gradient-to-b from-white to-zinc-50/50 p-6 shadow-sm dark:border-zinc-800 dark:from-zinc-900 dark:to-zinc-950/50">
+    <div className="relative overflow-hidden rounded-3xl border border-zinc-200 bg-gradient-to-b from-white to-zinc-50/50 p-6 shadow-xs dark:border-zinc-800 dark:from-zinc-900 dark:to-zinc-950/50 sm:p-7">
       {/* Background Accent Blur */}
       <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-emerald-500/10 blur-3xl" />
 
@@ -49,16 +49,13 @@ export function SafeToSpendCard({ pulse, onUpdateBudget, language }: SafeToSpend
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400">
               <Wallet className="h-4 w-4" />
             </span>
-            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-              {isHindi ? 'आज के लिए खर्च की रकम' : 'Today’s spending guide'}
+            <span className="text-xs font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+              {isHindi ? 'आज का सुरक्षित बजट' : 'Safe to Spend Today'}
             </span>
           </div>
-          <h2 className="mt-2 text-3xl font-extrabold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-4xl">
+          <h2 className="mt-2 text-3xl font-black tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-4xl">
             {formatINR(pulse.remainingTodayPaise, { showPaise: false })}
           </h2>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            {isHindi ? 'आज आप इतना खर्च कर सकते हैं' : 'Safe to spend for the rest of today'}
-          </p>
         </div>
 
         {/* Status Indicator */}
@@ -84,10 +81,10 @@ export function SafeToSpendCard({ pulse, onUpdateBudget, language }: SafeToSpend
 
       {/* Progress Gauge */}
       {pulse.monthlyBudgetPaise > 0 ? (
-        <div className="mt-6">
+        <div className="mt-5">
           <div className="flex items-center justify-between text-xs text-zinc-600 dark:text-zinc-400">
-            <span>{isHindi ? 'आज का खर्च' : 'Today’s spending'}</span>
-            <span className="font-medium text-zinc-900 dark:text-zinc-200">
+            <span className="font-medium">{isHindi ? 'आज का खर्च' : 'Today’s spending'}</span>
+            <span className="font-bold text-zinc-900 dark:text-zinc-200">
               {formatINR(pulse.spentTodayPaise, { showPaise: false })} /{' '}
               {formatINR(pulse.dailySafeAllowancePaise, { showPaise: false })} ({todayPercentage}%)
             </span>
@@ -106,15 +103,15 @@ export function SafeToSpendCard({ pulse, onUpdateBudget, language }: SafeToSpend
           </div>
         </div>
       ) : (
-        <div className="mt-6 rounded-2xl border border-dashed border-zinc-200 bg-zinc-50/50 p-3 text-center dark:border-zinc-800 dark:bg-zinc-900/50">
+        <div className="mt-5 rounded-2xl border border-dashed border-zinc-200 bg-zinc-50/50 p-3 text-center dark:border-zinc-800 dark:bg-zinc-900/50">
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            {isHindi ? 'महीने का खर्च बजट जोड़ें, ताकि आज की खर्च सीमा दिखे।' : 'Set a monthly spending limit to see a daily target.'}
+            {isHindi ? 'महीने का बजट जोड़ें, ताकि आज की खर्च सीमा दिखे।' : 'Set a monthly spending budget to track your daily allowance.'}
           </p>
         </div>
       )}
 
       {/* 3 Metrics Row */}
-      <div className="mt-6 grid grid-cols-3 gap-3 border-t border-zinc-100 pt-5 dark:border-zinc-800">
+      <div className="mt-5 grid grid-cols-3 gap-3 border-t border-zinc-100 pt-4 dark:border-zinc-800">
         <div className="rounded-xl bg-zinc-100/60 p-3 dark:bg-zinc-800/40">
           <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
             {isHindi ? 'आज खर्च' : 'Spent today'}
@@ -150,10 +147,10 @@ export function SafeToSpendCard({ pulse, onUpdateBudget, language }: SafeToSpend
       <div className="mt-4 flex items-center justify-between border-t border-zinc-100 pt-3 text-xs dark:border-zinc-800">
         <div className="text-zinc-500 dark:text-zinc-400">
           {isHindi ? 'महीने का बजट:' : 'Monthly budget:'}{' '}
-          <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+          <span className="font-bold text-zinc-800 dark:text-zinc-200">
             {pulse.monthlyBudgetPaise > 0
               ? formatINR(pulse.monthlyBudgetPaise, { showPaise: false })
-              : isHindi ? 'नहीं जोड़ा' : 'Not set'}
+              : isHindi ? 'सेट नहीं है' : 'Not set'}
           </span>
         </div>
 
@@ -169,7 +166,7 @@ export function SafeToSpendCard({ pulse, onUpdateBudget, language }: SafeToSpend
             <button
               onClick={handleSaveBudget}
               disabled={loading}
-              className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-emerald-500"
+              className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-bold text-white transition hover:bg-emerald-500"
             >
               {loading ? '...' : isHindi ? 'सेव' : 'Save'}
             </button>
@@ -177,13 +174,13 @@ export function SafeToSpendCard({ pulse, onUpdateBudget, language }: SafeToSpend
               onClick={() => setIsEditing(false)}
               className="rounded-lg px-2 py-1 text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
             >
-              {isHindi ? 'रद्द करें' : 'Cancel'}
+              {isHindi ? 'रद्द' : 'Cancel'}
             </button>
           </div>
         ) : (
           <button
             onClick={() => setIsEditing(true)}
-            className="flex items-center gap-1 font-medium text-emerald-600 hover:text-emerald-500 dark:text-emerald-400"
+            className="flex items-center gap-1 font-bold text-emerald-600 hover:text-emerald-500 dark:text-emerald-400"
           >
             <Edit3 className="h-3 w-3" />
             <span>{isHindi ? 'बजट बदलें' : 'Change budget'}</span>

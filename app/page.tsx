@@ -30,7 +30,6 @@ import {
   ArrowRightLeft,
   ArrowUpRight,
   ArrowDownRight,
-  Sparkles,
   Camera,
   Coins,
   WalletCards,
@@ -40,7 +39,6 @@ import {
   BarChart3,
   Plus,
   ChevronRight,
-  ChevronDown,
   Clock,
   Landmark,
   Banknote,
@@ -136,7 +134,6 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<'overview' | 'vaults' | 'transactions' | 'insights'>('overview');
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [linkedPhone, setLinkedPhone] = useState<string | null>(null);
-  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -1327,7 +1324,7 @@ export default function Home() {
                       <div className="flex items-center gap-2">
                         <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
                         <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-                          {isHindi ? 'उपलब्ध कुल खर्च राशि (Available Balance)' : 'Total Available Spending Balance'}
+                          {isHindi ? 'उपलब्ध खर्च' : 'Available to Spend'}
                         </span>
                       </div>
 
@@ -1343,7 +1340,7 @@ export default function Home() {
                             title={isHindi ? 'वॉल्ट्स देखें' : 'View Vaults'}
                           >
                             <ShieldCheck className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
-                            <span>+ {formatINR(totalSavingsBalancePaise, { showPaise: false })} {isHindi ? 'बचत (2 वॉल्ट)' : 'in 2 vaults'}</span>
+                            <span>+ {formatINR(totalSavingsBalancePaise, { showPaise: false })} {isHindi ? 'बचत' : 'in vaults'}</span>
                             <ChevronRight className="h-3 w-3 opacity-70" />
                           </button>
                         )}
@@ -1355,15 +1352,10 @@ export default function Home() {
                           <strong className="font-bold">{formatINR(onlineSpendingPaise, { showPaise: false })}</strong>
                         </span>
                         <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200/80 bg-amber-50/80 px-3 py-1 text-xs font-semibold text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">
-                          <span>💵 {isHindi ? 'नकद (हाथ में):' : 'Cash (In Hand):'}</span>
+                          <span>💵 {isHindi ? 'नकद:' : 'Cash:'}</span>
                           <strong className="font-bold">{formatINR(cashSpendingPaise, { showPaise: false })}</strong>
                         </span>
                       </div>
-                      <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-                        {isHindi
-                          ? 'बैंक और नकद का लाइव खर्च जोड़। तिजोरी का पैसा अलग सुरक्षित रहता है।'
-                          : 'Live liquid cash across Bank (UPI) & Pocket Cash. Vault savings stay protected.'}
-                      </p>
                     </div>
 
                     {/* 4 Interactive Quick Action Buttons */}
@@ -1432,11 +1424,8 @@ export default function Home() {
                   <div className="flex items-center justify-between">
                     <div>
                       <h2 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                        {isHindi ? 'आपके खर्च खाते' : 'Your Spending Accounts'}
+                        {isHindi ? 'खर्च खाते' : 'Spending Accounts'}
                       </h2>
-                      <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                        {isHindi ? 'रोजमर्रा के UPI और नकद खर्च के लिए' : 'For everyday UPI and cash expenses'}
-                      </span>
                     </div>
                     <button
                       type="button"
@@ -1444,7 +1433,7 @@ export default function Home() {
                       className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
                     >
                       <Lock className="h-3 w-3" />
-                      <span>{isHindi ? '2 वॉल्ट्स खोलें →' : 'View 2 Vaults →'}</span>
+                      <span>{isHindi ? 'वॉल्ट्स देखें →' : 'View Vaults →'}</span>
                     </button>
                   </div>
 
@@ -1457,55 +1446,6 @@ export default function Home() {
                     }}
                     language={language}
                   />
-
-                  {/* Vaults Teaser / Direct Link Banner */}
-                  {totalSavingsBalancePaise > 0 ? (
-                    <div className="flex items-center justify-between rounded-2xl border border-indigo-100 bg-indigo-50/60 p-3.5 dark:border-indigo-900/40 dark:bg-indigo-950/20">
-                      <div className="flex items-center gap-2.5">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-xs">
-                          <Lock className="h-4 w-4" />
-                        </div>
-                        <div>
-                          <p className="text-xs font-bold text-zinc-900 dark:text-zinc-100">
-                            {isHindi ? '2 सुरक्षित वॉल्ट्स में बचत:' : 'Protected in 2 Savings Vaults:'}{' '}
-                            <span className="text-indigo-600 dark:text-indigo-400 font-black">{formatINR(totalSavingsBalancePaise, { showPaise: false })}</span>
-                          </p>
-                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                            {isHindi ? 'दैनिक बजट से सुरक्षित डिजिटल व नकद बचत' : 'Ring-fenced from daily spending in Online & Cash Vaults'}
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('vaults')}
-                        className="inline-flex items-center gap-1 text-xs font-bold text-indigo-700 hover:text-indigo-800 dark:text-indigo-400"
-                      >
-                        <span>{isHindi ? 'वॉल्ट देखें' : 'View Vaults'}</span>
-                        <ChevronRight className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between rounded-2xl border border-dashed border-zinc-200 bg-zinc-50/60 p-3.5 dark:border-zinc-800 dark:bg-zinc-900/40">
-                      <div className="flex items-center gap-2.5">
-                        <ShieldCheck className="h-5 w-5 text-zinc-400" />
-                        <div>
-                          <p className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
-                            {isHindi ? 'अपनी बचत के लिए वॉल्ट बनाएं' : 'Ring-fence your savings with Vaults'}
-                          </p>
-                          <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                            {isHindi ? 'ऑनलाइन व नकद बचत अलग सुरक्षित रखें' : 'Keep digital & cash savings safe from impulsive spending'}
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('vaults')}
-                        className="text-xs font-bold text-emerald-600 hover:text-emerald-700 dark:text-emerald-400"
-                      >
-                        {isHindi ? 'खोलें →' : 'Open Vaults →'}
-                      </button>
-                    </div>
-                  )}
                 </section>
 
                 {/* Recent Activity Card (Last 5 transactions) */}
@@ -1638,115 +1578,12 @@ export default function Home() {
                     </div>
                   )}
                 </section>
-
-                {/* Collapsible How-it-Works Guide Accordion */}
-                <div className="rounded-3xl border border-zinc-200 bg-linear-to-b from-zinc-50/80 to-white p-5 shadow-xs dark:border-zinc-800 dark:from-zinc-900/60 dark:to-zinc-900">
-                  <button
-                    type="button"
-                    onClick={() => setIsGuideOpen(!isGuideOpen)}
-                    className="flex w-full items-center justify-between text-left"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400">
-                        <Sparkles className="h-4 w-4" />
-                      </span>
-                      <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">
-                        {isHindi ? 'आसान गाइड (UPI, नकद व वॉल्ट्स कैसे काम करते हैं)' : 'Quick Guide: How Bank, Cash & Vaults Work'}
-                      </h3>
-                    </div>
-                    <ChevronDown className={`h-4 w-4 text-zinc-400 transition-transform ${isGuideOpen ? 'rotate-180' : ''}`} />
-                  </button>
-
-                  {isGuideOpen && (
-                    <div className="mt-4 pt-3 border-t border-zinc-100 dark:border-zinc-800 space-y-3 text-xs text-zinc-600 dark:text-zinc-300 animate-fade-in">
-                      <div className="flex items-start gap-2.5">
-                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
-                          1
-                        </span>
-                        <p>
-                          <strong className="text-zinc-900 dark:text-zinc-100">
-                            {isHindi ? 'ऑनलाइन भुगतान (GPay / PhonePe):' : 'Online / UPI Payment:'}
-                          </strong>{' '}
-                          {isHindi ? 'खर्च जोड़ते समय Bank / UPI खाता चुनें।' : 'Choose Bank / UPI account when adding the expense.'}
-                        </p>
-                      </div>
-
-                      <div className="flex items-start gap-2.5">
-                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
-                          2
-                        </span>
-                        <p>
-                          <strong className="text-zinc-900 dark:text-zinc-100">
-                            {isHindi ? 'नकद खर्च (चाय, ऑटो, सब्जी):' : 'Cash Expense (Chai, Auto, Cash):'}
-                          </strong>{' '}
-                          {isHindi ? 'खर्च जोड़ते समय Cash खाता चुनें।' : 'Choose Cash account when spending cash.'}
-                        </p>
-                      </div>
-
-                      <div className="flex items-start gap-2.5">
-                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[10px] font-bold text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
-                          3
-                        </span>
-                        <p>
-                          <strong className="text-zinc-900 dark:text-zinc-100">
-                            {isHindi ? 'ATM निकासी (ATM Withdrawal):' : 'ATM Cash Withdrawal:'}
-                          </strong>{' '}
-                          {isHindi
-                            ? '⇄ ट्रांसफर बटन दबाएं और Bank से Cash में पैसे ट्रांसफर करें।'
-                            : 'Click ⇄ Transfer to move money from Bank to Cash (not an expense!).'}
-                        </p>
-                      </div>
-
-                      <div className="flex items-start gap-2.5">
-                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
-                          4
-                        </span>
-                        <p>
-                          <strong className="text-zinc-900 dark:text-zinc-100">
-                            {isHindi ? 'जेब का नकद मिलाना (Adjust Cash):' : 'Sync Real Cash:'}
-                          </strong>{' '}
-                          {isHindi
-                            ? 'Cash कार्ड पर "गिनती से मिलाएं" दबाएं और जेब का असली नकद दर्ज करें।'
-                            : 'Click "Count & Match" on Cash card whenever your physical cash differs.'}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
               </div>
             )}
 
-            {/* 2. VAULTS & ACCOUNTS TAB */}
+            {/* 2. VAULTS TAB */}
             {activeTab === 'vaults' && (
-              <div className="space-y-8 animate-fade-in">
-                {/* Header Banner */}
-                <div className="rounded-3xl border border-indigo-100 bg-linear-to-b from-indigo-50/40 via-white to-white p-6 shadow-xs dark:border-indigo-950/40 dark:from-indigo-950/20 dark:to-zinc-900">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <span className="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
-                        {isHindi ? 'सुरक्षित बचत प्रणाली' : 'Ring-Fenced Savings Architecture'}
-                      </span>
-                      <h2 className="mt-1 text-2xl sm:text-3xl font-black text-zinc-900 dark:text-zinc-100">
-                        {formatINR(totalSavingsBalancePaise, { showPaise: false })}
-                      </h2>
-                      <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                        {isHindi
-                          ? 'दैनिक खर्च से अलग रखी गई आपकी सुरक्षित ऑनलाइन और नकद बचत।'
-                          : 'Digital reserve and physical cash locked away from daily impulse spending.'}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 dark:border-indigo-900/50 dark:bg-indigo-950/40 dark:text-indigo-300">
-                        🏦 {isHindi ? 'ऑनलाइन वॉल्ट:' : 'Online Vault:'} <strong>{formatINR(onlineSavingsPaise, { showPaise: false })}</strong>
-                      </span>
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300">
-                        💵 {isHindi ? 'कैश वॉल्ट:' : 'Cash Vault:'} <strong>{formatINR(cashSavingsPaise, { showPaise: false })}</strong>
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Savings Vault Interactive Card (UPI Save, Deposit/Withdraw, Target Goals) */}
+              <div className="space-y-6 animate-fade-in">
                 <SavingsVaultCard
                   accounts={accounts}
                   savingsUpiId={savingsUpiId}
@@ -1754,29 +1591,9 @@ export default function Home() {
                   onTransfer={handleTransferFunds}
                   onUpdateGoal={handleUpdateAccountGoal}
                   onCreateSavingsAccount={handleCreateSavingsAccount}
+                  onReconcile={handleReconcileAccount}
                   language={language}
                 />
-
-                {/* All Accounts Detailed Grid (with balance reconciliation) */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                      {isHindi ? 'सभी खाते (All Accounts)' : 'All Accounts'}
-                    </h3>
-                    <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                      {isHindi ? 'बैलेंस सेट करें या रीकंसाइल करें' : 'Set or reconcile balances'}
-                    </span>
-                  </div>
-                  <AccountCards
-                    accounts={accounts}
-                    onReconcile={handleReconcileAccount}
-                    onOpenTransferModal={() => {
-                      setNewTransactionType('transfer');
-                      setIsAddModalOpen(true);
-                    }}
-                    language={language}
-                  />
-                </div>
               </div>
             )}
 
