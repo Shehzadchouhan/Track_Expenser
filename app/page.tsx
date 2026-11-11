@@ -61,6 +61,10 @@ function isDisplayTransaction(value: unknown): value is DisplayTransaction {
 
 export default function Home() {
   const [transactions, setTransactions] = useState<DisplayTransaction[]>([]);
+  const transactionsRef = React.useRef(transactions);
+  useEffect(() => {
+    transactionsRef.current = transactions;
+  }, [transactions]);
   const [startingBalanceRupees, setStartingBalanceRupees] = useState<number>(0);
   const [monthlyBudgetPaise, setMonthlyBudgetPaise] = useState<number>(2500000); // Default ₹25,000
   const [accounts, setAccounts] = useState<DashboardAccount[]>([
@@ -144,13 +148,18 @@ export default function Home() {
   }, [language]);
 
   const isFetchingRef = React.useRef(false);
+  const dashboardLoadVersionRef = React.useRef(0);
+  const pendingTransactionSavesRef = React.useRef(0);
 
   // The server resolves account identity from the Supabase session cookie.
   const loadDashboardData = useCallback(async (force = false) => {
+    if (pendingTransactionSavesRef.current > 0) return false;
     if (isFetchingRef.current && !force) return false;
     isFetchingRef.current = true;
+    const requestVersion = ++dashboardLoadVersionRef.current;
     try {
-      const res = await fetch('/api/dashboard');
+      const res = await fetch('/api/dashboard', { cache: 'no-store' });
+      if (requestVersion !== dashboardLoadVersionRef.current) return false;
       if (!res.ok) {
         if (res.status === 401) {
           setIsAuthenticated(false);
@@ -159,6 +168,7 @@ export default function Home() {
         return false;
       }
       const data = await res.json();
+      if (requestVersion !== dashboardLoadVersionRef.current) return false;
       if (data.authenticated) {
         setIsAuthenticated(true);
         setUserEmail(data.email || null);
@@ -174,7 +184,7 @@ export default function Home() {
         if (Array.isArray(data.accounts) && data.accounts.length > 0) {
           setAccounts((prev) => {
             // Apply server accounts, preserving optimistic delta of any in-flight manual transactions
-            const pendingManual = transactions.filter((t) => t.id.startsWith('manual-'));
+            const pendingManual = transactionsRef.current.filter((t) => t.id.startsWith('manual-'));
             if (pendingManual.length === 0) return data.accounts;
 
             return data.accounts.map((acc: DashboardAccount) => {
@@ -230,11 +240,14 @@ export default function Home() {
       setIsAuthenticated(false);
       setUserEmail(null);
       return false;
-    } catch {
+    } catch (error) {
+      console.warn('[Dashboard] Could not refresh dashboard data:', error);
       return false;
     } finally {
-      isFetchingRef.current = false;
-      setIsInitialLoading(false);
+      if (requestVersion === dashboardLoadVersionRef.current) {
+        isFetchingRef.current = false;
+        setIsInitialLoading(false);
+      }
     }
   }, []);
 
@@ -628,12 +641,49 @@ export default function Home() {
     }
   };
 
-  // Reconcile account balance (instant local update + background sync)
+  // Set one account's opening balance baseline; reconciliation is not a transaction.
   const handleReconcileAccount = async (accountId: string, actualRupees: number) => {
     const actual_balance_paise = Math.round(actualRupees * 100);
+    const account = accounts.find((item) => item.id === accountId);
+    if (!account) {
+      throw new Error(isHindi ? 'खाता नहीं मिला।' : 'Account not found.');
+    }
+
+    let openingBalancePaise = account.opening_balance_paise;
+    if (isAuthenticated) {
+      const response = await fetch('/api/dashboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'reconcile_account',
+          account_id: accountId,
+          actual_balance_paise,
+        }),
+      });
+      const responseData = await response.json().catch(() => null);
+      if (!response.ok || typeof responseData?.openingBalancePaise !== 'number') {
+        if (response.status === 401) {
+          setIsAuthenticated(false);
+          setUserEmail(null);
+        }
+        throw new Error(
+          responseData?.error ||
+            (isHindi ? 'खाते का बैलेंस अपडेट नहीं हो सका।' : 'Could not update the account balance.')
+        );
+      }
+      openingBalancePaise = responseData.openingBalancePaise;
+    } else {
+      openingBalancePaise += actual_balance_paise - account.current_balance_paise;
+    }
 
     const updatedAccounts = accounts.map((acc) =>
-      acc.id === accountId ? { ...acc, current_balance_paise: actual_balance_paise } : acc
+      acc.id === accountId
+        ? {
+            ...acc,
+            opening_balance_paise: openingBalancePaise,
+            current_balance_paise: actual_balance_paise,
+          }
+        : acc
     );
     setAccounts(updatedAccounts);
     try {
@@ -645,25 +695,20 @@ export default function Home() {
           'track_expenser_cached_dashboard',
           JSON.stringify({ ...base, accounts: updatedAccounts })
         );
+      } else {
+        const cachedDashboard = {
+          authenticated: false,
+          accounts: updatedAccounts,
+          transactions,
+        };
+        localStorage.setItem('track_expenser_cached_dashboard', JSON.stringify(cachedDashboard));
       }
-    } catch {}
+    } catch (error) {
+      console.warn('[Dashboard] Could not cache reconciled account balance:', error);
+    }
 
     if (isAuthenticated) {
-      void (async () => {
-        try {
-          await fetch('/api/dashboard', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'reconcile_account',
-              account_id: accountId,
-              actual_balance_paise,
-            }),
-          });
-        } catch (err) {
-          console.warn('[Dashboard] Background reconcile error:', err);
-        }
-      })();
+      void loadDashboardData(true);
     }
   };
 
@@ -1168,7 +1213,7 @@ export default function Home() {
     }
 
     const newTx: DisplayTransaction = {
-      id: `manual-${Date.now()}`,
+      id: `manual-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       type: isSameAccount ? 'income' : data.type,
       amount_paise,
       account_id: sourceAccId,
@@ -1185,6 +1230,7 @@ export default function Home() {
 
     // 1. Calculate updated transactions
     const updatedTransactions = [newTx, ...transactions];
+    transactionsRef.current = updatedTransactions;
     setTransactions(updatedTransactions);
 
     // 2. Optimistically update account balances in state immediately
@@ -1213,72 +1259,148 @@ export default function Home() {
     });
     setAccounts(updatedAccounts);
 
-    // 3. Immediately persist updated transactions & accounts to local storage (both keys so reload NEVER reverts!)
-    try {
-      localStorage.setItem('track_expenser_transactions', JSON.stringify(updatedTransactions));
-      localStorage.setItem('track_expenser_accounts', JSON.stringify(updatedAccounts));
+    // Guest records are local-only; signed-in optimistic rows are cached only after server confirmation.
+    if (!isAuthenticated) {
+      try {
+        localStorage.setItem('track_expenser_transactions', JSON.stringify(updatedTransactions));
+        localStorage.setItem('track_expenser_accounts', JSON.stringify(updatedAccounts));
 
-      const existingCached = localStorage.getItem('track_expenser_cached_dashboard');
-      const baseCached = existingCached ? JSON.parse(existingCached) : {};
-      localStorage.setItem(
-        'track_expenser_cached_dashboard',
-        JSON.stringify({
-          ...baseCached,
-          accounts: updatedAccounts,
-          transactions: updatedTransactions,
-        })
-      );
-    } catch (err) {
-      console.warn('[Dashboard] LocalStorage caching warning:', err);
+        const existingCached = localStorage.getItem('track_expenser_cached_dashboard');
+        const baseCached = existingCached ? JSON.parse(existingCached) : {};
+        localStorage.setItem(
+          'track_expenser_cached_dashboard',
+          JSON.stringify({
+            ...baseCached,
+            accounts: updatedAccounts,
+            transactions: updatedTransactions,
+          })
+        );
+      } catch (err) {
+        console.warn('[Dashboard] LocalStorage caching warning:', err);
+      }
     }
 
-    // 4. Background server sync if authenticated (instant return so modal closes at 0ms!)
+    // 4. Confirm the server write before reporting success for signed-in users.
     if (isAuthenticated) {
-      void (async () => {
+      pendingTransactionSavesRef.current += 1;
+      dashboardLoadVersionRef.current += 1;
+      isFetchingRef.current = false;
+      let saveSucceeded = false;
+      try {
+        const res = await fetch('/api/dashboard', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'add_transaction',
+            type: data.type,
+            amount_paise,
+            account_id: sourceAccId,
+            transfer_to_account_id: destAccId,
+            source_account_name: fromAcc?.name,
+            transfer_to_account_name: toAcc?.name,
+            category_name: isSameAccount ? 'Deposit' : data.category,
+            merchant: data.merchant,
+            note: data.note,
+            occurred_at: newTx.occurred_at,
+          }),
+        });
+        const responseData = await res.json().catch(() => null);
+        if (!res.ok || typeof responseData?.transaction?.id !== 'string') {
+          if (res.status === 401) {
+            setIsAuthenticated(false);
+            setUserEmail(null);
+          }
+          throw new Error(
+            responseData?.error ||
+              (res.status === 401
+                ? (isHindi ? 'कृपया फिर से साइन इन करें।' : 'Please sign in again.')
+                : (isHindi ? 'लेन-देन सेव नहीं हो सका।' : 'Could not save the transaction.'))
+          );
+        }
+
+        const savedId = responseData.transaction.id;
+        const replacedTransactions = transactionsRef.current.map((transaction) =>
+          transaction.id === newTx.id ? { ...transaction, id: savedId } : transaction
+        );
+        const seenIds = new Set<string>();
+        const confirmedTransactions = replacedTransactions.filter((transaction) => {
+          if (seenIds.has(transaction.id)) return false;
+          seenIds.add(transaction.id);
+          return true;
+        });
+        transactionsRef.current = confirmedTransactions;
+        setTransactions(confirmedTransactions);
+        saveSucceeded = true;
+
         try {
-          const res = await fetch('/api/dashboard', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'add_transaction',
-              type: data.type,
-              amount_paise,
-              account_id: sourceAccId,
-              transfer_to_account_id: destAccId,
-              source_account_name: fromAcc?.name,
-              transfer_to_account_name: toAcc?.name,
-              category_name: isSameAccount ? 'Deposit' : data.category,
-              merchant: data.merchant,
-              note: data.note,
-              occurred_at: data.occurredAt,
-            }),
-          });
-          if (res.ok) {
-            const resData = await res.json();
-            if (resData.transaction?.id) {
-              setTransactions((prev) => {
-                const updated = prev.map((t) => (t.id === newTx.id ? { ...t, id: resData.transaction.id } : t));
-                try {
-                  localStorage.setItem('track_expenser_transactions', JSON.stringify(updated));
-                  const existingCached = localStorage.getItem('track_expenser_cached_dashboard');
-                  if (existingCached) {
-                    const base = JSON.parse(existingCached);
-                    localStorage.setItem(
-                      'track_expenser_cached_dashboard',
-                      JSON.stringify({ ...base, transactions: updated })
-                    );
-                  }
-                } catch {}
-                return updated;
-              });
-            }
-          } else {
-            console.warn('[Dashboard] Server rejected transaction sync:', res.status);
+          localStorage.setItem('track_expenser_transactions', JSON.stringify(confirmedTransactions));
+          localStorage.setItem('track_expenser_accounts', JSON.stringify(updatedAccounts));
+          const existingCached = localStorage.getItem('track_expenser_cached_dashboard');
+          if (existingCached) {
+            const base = JSON.parse(existingCached);
+            localStorage.setItem(
+              'track_expenser_cached_dashboard',
+              JSON.stringify({
+                ...base,
+                transactions: confirmedTransactions,
+                accounts: updatedAccounts,
+              })
+            );
           }
         } catch (err) {
-          console.warn('[Dashboard] Network error during background transaction sync:', err);
+          console.warn('[Dashboard] LocalStorage caching warning:', err);
         }
-      })();
+      } catch (err) {
+        const revertedTransactions = transactionsRef.current.filter(
+          (transaction) => transaction.id !== newTx.id
+        );
+        transactionsRef.current = revertedTransactions;
+        setTransactions(revertedTransactions);
+
+        const revertedAccounts = accounts.map((account) => {
+          let balance = account.current_balance_paise;
+          if (data.type === 'expense' && account.id === sourceAccId) {
+            balance += amount_paise;
+          } else if (data.type === 'income' && account.id === sourceAccId) {
+            balance -= amount_paise;
+          } else if (data.type === 'transfer') {
+            if (isSameAccount && account.id === sourceAccId) {
+              balance -= amount_paise;
+            } else if (!isSameAccount) {
+              if (account.id === sourceAccId) balance += amount_paise;
+              if (account.id === destAccId) balance -= amount_paise;
+            }
+          }
+          return { ...account, current_balance_paise: balance };
+        });
+        setAccounts(revertedAccounts);
+
+        try {
+          localStorage.setItem('track_expenser_transactions', JSON.stringify(revertedTransactions));
+          localStorage.setItem('track_expenser_accounts', JSON.stringify(revertedAccounts));
+          const existingCached = localStorage.getItem('track_expenser_cached_dashboard');
+          if (existingCached) {
+            const base = JSON.parse(existingCached);
+            localStorage.setItem(
+              'track_expenser_cached_dashboard',
+              JSON.stringify({
+                ...base,
+                transactions: revertedTransactions,
+                accounts: revertedAccounts,
+              })
+            );
+          }
+        } catch (cacheError) {
+          console.warn('[Dashboard] Could not restore local cache after failed transaction:', cacheError);
+        }
+
+        throw err;
+      } finally {
+        pendingTransactionSavesRef.current -= 1;
+        if (saveSucceeded && pendingTransactionSavesRef.current === 0) {
+          void loadDashboardData(true);
+        }
+      }
     }
   };
 

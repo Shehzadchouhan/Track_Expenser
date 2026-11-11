@@ -56,7 +56,7 @@ interface AddTransactionModalProps {
 
 function extractSpokenAmount(transcript: string): string | null {
   const normalized = transcript
-    .replace(/[०-९]/g, (digit) => String('०१२३४५६र्ट९'.indexOf(digit)));
+    .replace(/[०-९]/g, (digit) => String('०१२३४५६७८९'.indexOf(digit)));
   const match = normalized.match(/(?:₹|rs\.?|rupees?|inr|रुपये?|रुपया|रु\.?)?\s*([\d,]+(?:\.\d{1,2})?)/i);
   if (!match) return null;
 
@@ -99,6 +99,7 @@ export function AddTransactionModal({
   const isHindi = language === 'hi';
   const defaultBank = accounts.find((a) => a.type === 'bank' || a.is_default) || accounts[0];
   const defaultCash = accounts.find((a) => a.type === 'cash') || accounts[1] || accounts[0];
+  const defaultCashId = defaultCash?.id;
 
   const [type, setType] = useState<'expense' | 'income' | 'transfer'>(initialType);
   const [selectedAccountId, setSelectedAccountId] = useState<string>(
@@ -132,14 +133,15 @@ export function AddTransactionModal({
       setCategory(
         initialCategory ||
           (initialType === 'income'
-            ? (selectedAccountId === defaultCash?.id ? 'Cash Deposit' : 'Online Deposit')
+            ? (initialAccountId === defaultCashId ? 'Cash Deposit' : 'Online Deposit')
             : 'Food & Dining')
       );
       setNote(initialNote || '');
       setError(null);
       setShowDetails(false);
+      setOccurredAt(undefined);
     }
-  }, [isOpen, initialAmount, initialMerchant, initialCategory, initialNote, initialType, isHindi, selectedAccountId, defaultCash]);
+  }, [isOpen, initialAmount, initialMerchant, initialCategory, initialNote, initialType, initialAccountId, defaultCashId]);
 
   useEffect(() => {
     if (initialAccountId) {

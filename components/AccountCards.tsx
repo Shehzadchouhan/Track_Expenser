@@ -342,13 +342,9 @@ export function AccountCards({
                     ₹{calculatedDifferenceRupees.toFixed(2)}
                   </span>
                   <p className="mt-0.5 text-[11px] opacity-80">
-                    {calculatedDifferenceRupees > 0
-                      ? isHindi
-                        ? 'ऐप में यह राशि समायोजन कमाई के रूप में दर्ज होगी।'
-                        : 'A balance adjustment income record will be added.'
-                      : isHindi
-                      ? 'ऐप में यह राशि समायोजन खर्च के रूप में दर्ज होगी।'
-                      : 'A balance adjustment expense record will be added.'}
+                    {isHindi
+                      ? 'केवल इस खाते का शुरुआती बैलेंस बदलेगा; कोई लेन-देन नहीं बनेगा।'
+                      : "Only this account's opening balance will be adjusted; no transaction will be created."}
                   </p>
                 </div>
               )}

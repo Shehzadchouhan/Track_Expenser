@@ -167,7 +167,6 @@ function resolveAccountForTx(
 }
 
 async function safeInsertTransaction(admin: any, txPayload: Record<string, any>) {
-  // Pre-sanitize: strip non-UUID account IDs so PostgreSQL never throws 22P02 (invalid uuid syntax)
   const sanitized = { ...txPayload };
   if (sanitized.account_id && !isUuidString(sanitized.account_id)) {
     delete sanitized.account_id;
@@ -176,40 +175,34 @@ async function safeInsertTransaction(admin: any, txPayload: Record<string, any>)
     delete sanitized.transfer_to_account_id;
   }
 
-  try {
-    const res = await admin.from('transactions').insert(sanitized).select('id').single();
-    if (!res.error) return res;
+  const insert = (payload: Record<string, any>) =>
+    admin.from('transactions').insert(payload).select('id').single();
+  const result = await insert(sanitized);
+  if (!result.error) return result;
 
-    // If PostgreSQL rejects type='transfer' (constraint violation 23514 on unmigrated DB):
-    // Fall back to type='expense' (outflow), keeping merchant and metadata tag intact!
-    const fallbackPayload = { ...sanitized };
+  const fallbackPayload = { ...sanitized };
+  if (result.error.code === '42703') {
     delete fallbackPayload.account_id;
     delete fallbackPayload.transfer_to_account_id;
-    if (fallbackPayload.type === 'transfer') {
-      fallbackPayload.type = 'expense';
-    }
-
-    const fbRes = await admin.from('transactions').insert(fallbackPayload).select('id').single();
-    if (!fbRes.error) return fbRes;
-
-    // Ultimate fallback: type='income'
-    if (fallbackPayload.type === 'expense') {
-      fallbackPayload.type = 'income';
-      return await admin.from('transactions').insert(fallbackPayload).select('id').single();
-    }
-    return fbRes;
-  } catch {
-    const cleanPayload = { ...sanitized };
-    delete cleanPayload.account_id;
-    delete cleanPayload.transfer_to_account_id;
-    if (cleanPayload.type === 'transfer') cleanPayload.type = 'expense';
-    try {
-      return await admin.from('transactions').insert(cleanPayload).select('id').single();
-    } catch {
-      cleanPayload.type = 'income';
-      return await admin.from('transactions').insert(cleanPayload).select('id').single();
-    }
+  } else if (result.error.code === '23514' && fallbackPayload.type === 'transfer') {
+    delete fallbackPayload.account_id;
+    delete fallbackPayload.transfer_to_account_id;
+    fallbackPayload.type = 'expense';
+  } else {
+    return result;
   }
+
+  const fallbackResult = await insert(fallbackPayload);
+  if (!fallbackResult.error) return fallbackResult;
+
+  if (fallbackResult.error.code === '23514' && fallbackPayload.type === 'transfer') {
+    delete fallbackPayload.account_id;
+    delete fallbackPayload.transfer_to_account_id;
+    fallbackPayload.type = 'expense';
+    return insert(fallbackPayload);
+  }
+
+  return fallbackResult;
 }
 
 export async function GET() {
@@ -387,15 +380,21 @@ export async function GET() {
       categories = DEFAULT_CATEGORIES.map((c, i) => ({ id: `cat-${i}`, name: c.name, color: c.color, kind: c.kind }));
     }
 
-    // Resilient transactions query
-    let txList: any[] = [];
-    const txRes = await admin
-      .from('transactions')
-      .select('id, type, amount_paise, merchant, note, category_id, account_id, transfer_to_account_id, source, occurred_at')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(100);
+    // Fetch the recent feed and full balance history concurrently.
+    const [txRes, allTxRes] = await Promise.all([
+      admin
+        .from('transactions')
+        .select('id, type, amount_paise, merchant, note, category_id, account_id, transfer_to_account_id, source, occurred_at')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(100),
+      admin
+        .from('transactions')
+        .select('type, amount_paise, account_id, transfer_to_account_id, merchant, note')
+        .eq('user_id', user.id),
+    ]);
 
+    let txList: any[] = [];
     if (txRes.error) {
       const fallbackTxRes = await admin
         .from('transactions')
@@ -417,6 +416,21 @@ export async function GET() {
       txList = txRes.data ?? [];
     }
 
+    let allUserTx: any[] = [];
+    if (allTxRes.error) {
+      const fallbackAllTx = await admin
+        .from('transactions')
+        .select('type, amount_paise, merchant, note')
+        .eq('user_id', user.id);
+      if (fallbackAllTx.error) {
+        console.error('[Dashboard API] Failed to fetch transaction balances:', fallbackAllTx.error);
+        return NextResponse.json({ error: 'Failed to fetch dashboard data.' }, { status: 500 });
+      }
+      allUserTx = fallbackAllTx.data ?? [];
+    } else {
+      allUserTx = allTxRes.data ?? [];
+    }
+
     // Compute live balance for each account using all user transactions
     const accountMap = new Map((accounts ?? []).map((acc) => [acc.id, acc]));
     const accountBalances = new Map<string, number>();
@@ -428,22 +442,6 @@ export async function GET() {
     const cashAcc = (accounts ?? []).find((a) => a.purpose === 'spending' && a.type === 'cash');
     const onlineVaultAcc = (accounts ?? []).find((a) => a.purpose === 'savings' && (a.type === 'bank' || a.name.toLowerCase().includes('online')));
     const cashVaultAcc = (accounts ?? []).find((a) => a.purpose === 'savings' && (a.type === 'cash' || a.name.toLowerCase().includes('cash')));
-
-    let allUserTx: any[] = [];
-    const allTxRes = await admin
-      .from('transactions')
-      .select('type, amount_paise, account_id, transfer_to_account_id, merchant, note')
-      .eq('user_id', user.id);
-
-    if (allTxRes.error) {
-      const fallbackAllTx = await admin
-        .from('transactions')
-        .select('type, amount_paise, merchant, note')
-        .eq('user_id', user.id);
-      allUserTx = fallbackAllTx.data ?? [];
-    } else {
-      allUserTx = allTxRes.data ?? [];
-    }
 
     allUserTx.forEach((tx) => {
       const amt = Number(tx.amount_paise);
@@ -658,34 +656,30 @@ export async function POST(request: NextRequest) {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
 
     if (mutation.action === 'reconcile_account') {
-      const isFallback = !isUuid(mutation.account_id);
-      let targetAccount: { id: string; name: string; opening_balance_paise: number } | null = null;
-
-      if (!isFallback) {
-        try {
-          const { data: dbAccount } = await admin
-            .from('accounts')
-            .select('id, name, opening_balance_paise')
-            .eq('id', mutation.account_id)
-            .eq('user_id', user.id)
-            .single();
-
-          if (dbAccount) {
-            targetAccount = {
-              id: dbAccount.id,
-              name: dbAccount.name,
-              opening_balance_paise: Number(dbAccount.opening_balance_paise),
-            };
-          }
-        } catch {
-          targetAccount = null;
-        }
+      if (!isUuid(mutation.account_id)) {
+        return NextResponse.json({ error: 'Invalid account ID.' }, { status: 400 });
       }
 
-      let currentBalance = 0;
-      if (targetAccount) {
-        currentBalance = Number(targetAccount.opening_balance_paise);
+      const { data: userAccounts, error: accountsError } = await admin
+        .from('accounts')
+        .select('id, name, type, purpose, is_default, opening_balance_paise')
+        .eq('user_id', user.id);
+      if (accountsError) {
+        console.error('[Dashboard API] Failed to load accounts for reconciliation:', accountsError);
+        return NextResponse.json({ error: 'Could not reconcile this account.' }, { status: 500 });
       }
+      const reconciliationAccounts = userAccounts ?? [];
+      const targetAccount = reconciliationAccounts.find((account) => account.id === mutation.account_id);
+      if (!targetAccount) {
+        return NextResponse.json({ error: 'Account not found.' }, { status: 404 });
+      }
+
+      const openingBalance = Number(targetAccount.opening_balance_paise);
+      let currentBalance = openingBalance;
+      const bankAcc = reconciliationAccounts.find((account) => account.is_default || (account.purpose === 'spending' && account.type === 'bank'));
+      const cashAcc = reconciliationAccounts.find((account) => account.purpose === 'spending' && account.type === 'cash');
+      const onlineVaultAcc = reconciliationAccounts.find((account) => account.purpose === 'savings' && (account.type === 'bank' || account.name.toLowerCase().includes('online')));
+      const cashVaultAcc = reconciliationAccounts.find((account) => account.purpose === 'savings' && (account.type === 'cash' || account.name.toLowerCase().includes('cash')));
 
       let allTx: any[] = [];
       const txRes = await admin
@@ -698,22 +692,14 @@ export async function POST(request: NextRequest) {
           .from('transactions')
           .select('type, amount_paise, merchant, note')
           .eq('user_id', user.id);
+        if (fbRes.error) {
+          console.error('[Dashboard API] Failed to load transactions for reconciliation:', fbRes.error);
+          return NextResponse.json({ error: 'Could not reconcile this account.' }, { status: 500 });
+        }
         allTx = fbRes.data ?? [];
       } else {
         allTx = txRes.data ?? [];
       }
-
-      const isTargetAcc = (id?: string | null, merchantOrNote = '') => {
-        if (!id) return false;
-        if (targetAccount?.id && id === targetAccount.id) return true;
-        const lowId = id.toLowerCase();
-        const lowMut = mutation.account_id.toLowerCase();
-        if (lowMut.includes('cash-vault') && (lowId.includes('cash-vault') || lowId.includes('cash vault') || merchantOrNote.includes('cash vault'))) return true;
-        if ((lowMut.includes('online-vault') || lowMut.includes('savings')) && (lowId.includes('online-vault') || lowId.includes('online vault') || lowId.includes('savings') || merchantOrNote.includes('online vault'))) return true;
-        if (lowMut.includes('cash') && !lowMut.includes('vault') && (lowId.includes('cash') && !lowId.includes('vault'))) return true;
-        if ((lowMut.includes('bank') || lowMut.includes('upi')) && !lowMut.includes('vault') && (lowId.includes('bank') || lowId.includes('upi'))) return true;
-        return false;
-      };
 
       allTx.forEach((tx) => {
         const amt = Number(tx.amount_paise);
@@ -743,67 +729,50 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        if (effectiveType === 'income' && isTargetAcc(fromAccId, merchantOrNote)) {
+        if (!fromAccId || !reconciliationAccounts.some((account) => account.id === fromAccId)) {
+          fromAccId = resolveAccountForTx(fromAccId, merchantOrNote, bankAcc, cashAcc, onlineVaultAcc, cashVaultAcc, 'from');
+        }
+        if (effectiveType === 'transfer' && (!toAccId || !reconciliationAccounts.some((account) => account.id === toAccId))) {
+          toAccId = resolveAccountForTx(toAccId, merchantOrNote, bankAcc, cashAcc, onlineVaultAcc, cashVaultAcc, 'to');
+        }
+
+        if (effectiveType === 'income' && fromAccId === targetAccount.id) {
           currentBalance += amt;
-        } else if (effectiveType === 'expense' && isTargetAcc(fromAccId, merchantOrNote)) {
+        } else if (effectiveType === 'expense' && fromAccId === targetAccount.id) {
           currentBalance -= amt;
         } else if (effectiveType === 'transfer') {
           if (fromAccId && toAccId && fromAccId === toAccId) {
-            if (isTargetAcc(fromAccId, merchantOrNote)) currentBalance += amt;
+            if (fromAccId === targetAccount.id) currentBalance += amt;
           } else {
-            if (isTargetAcc(fromAccId, merchantOrNote)) currentBalance -= amt;
-            if (isTargetAcc(toAccId, merchantOrNote)) currentBalance += amt;
+            if (fromAccId === targetAccount.id) currentBalance -= amt;
+            if (toAccId === targetAccount.id) currentBalance += amt;
           }
         }
       });
 
       const difference = mutation.actual_balance_paise - currentBalance;
-      if (difference === 0) {
-        return NextResponse.json({ success: true, message: 'Balance is already reconciled.', adjustedPaise: 0 });
+      const openingBalancePaise = openingBalance + difference;
+      if (openingBalancePaise < -MAX_PAISE || openingBalancePaise > MAX_PAISE) {
+        return NextResponse.json({ error: 'The reconciled balance is outside the supported range.' }, { status: 400 });
       }
 
-      const isPositive = difference > 0;
-      const accountDisplayName = targetAccount?.name ?? (
-        mutation.account_id.includes('cash-vault')
-          ? 'Cash Vault'
-          : mutation.account_id.includes('cash')
-          ? 'Cash'
-          : mutation.account_id.includes('online-vault') || mutation.account_id.includes('savings')
-          ? 'Online Vault'
-          : 'Bank / UPI'
-      );
-
-      const metaTag = formatTxMeta({
-        type: isPositive ? 'income' : 'expense',
-        from: targetAccount?.id ?? mutation.account_id,
-        fromName: accountDisplayName,
-      });
-
-      const txPayload: any = {
-        user_id: user.id,
-        type: isPositive ? 'income' : 'expense',
-        amount_paise: Math.abs(difference),
-        merchant: `${accountDisplayName} Reconciliation`,
-        note: `Balance adjustment to ₹${(mutation.actual_balance_paise / 100).toFixed(2)} ${metaTag}`,
-        source: 'web',
-        occurred_at: new Date().toISOString(),
-      };
-      if (targetAccount?.id && isUuidString(targetAccount.id)) {
-        txPayload.account_id = targetAccount.id;
-      }
-
-      const { data: adjTx, error: adjError } = await safeInsertTransaction(admin, txPayload);
-
-      if (adjError) {
-        console.error('[Dashboard API] Failed to log reconciliation adjustment:', adjError);
-        return NextResponse.json({ error: 'Could not record reconciliation.' }, { status: 500 });
+      const { data: updatedAccount, error: updateError } = await admin
+        .from('accounts')
+        .update({ opening_balance_paise: openingBalancePaise })
+        .eq('id', targetAccount.id)
+        .eq('user_id', user.id)
+        .select('id, opening_balance_paise')
+        .single();
+      if (updateError || !updatedAccount) {
+        console.error('[Dashboard API] Failed to reconcile account balance:', updateError);
+        return NextResponse.json({ error: 'Could not reconcile this account.' }, { status: 500 });
       }
 
       return NextResponse.json({
         success: true,
         adjustedPaise: difference,
         newBalancePaise: mutation.actual_balance_paise,
-        transactionId: adjTx?.id ?? null,
+        openingBalancePaise: Number(updatedAccount.opening_balance_paise),
       });
     }
 
@@ -968,10 +937,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Default: add_transaction
-    let { data: userAccounts } = await admin
-      .from('accounts')
-      .select('id, name, type, purpose, is_default')
-      .eq('user_id', user.id);
+    const [accountsResult, categoriesResult] = await Promise.all([
+      admin
+        .from('accounts')
+        .select('id, name, type, purpose, is_default')
+        .eq('user_id', user.id),
+      admin
+        .from('categories')
+        .select('id, name')
+        .eq('user_id', user.id),
+    ]);
+    let userAccounts = accountsResult.data;
 
     // If user has no accounts yet in DB, ensure core accounts exist
     if ((!userAccounts || userAccounts.length === 0) && typeof admin.from('accounts')?.insert === 'function') {
@@ -1074,12 +1050,7 @@ export async function POST(request: NextRequest) {
 
     let categoryId: string | null = null;
     if (transactionType !== 'transfer' && mutation.category_name) {
-      const { data: categories } = await admin
-        .from('categories')
-        .select('id, name')
-        .eq('user_id', user.id);
-
-      const matchedCategory = categories?.find(
+      const matchedCategory = categoriesResult.data?.find(
         (category) => category.name.toLowerCase() === mutation.category_name!.toLowerCase()
       );
       categoryId = matchedCategory?.id ?? null;

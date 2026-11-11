@@ -107,6 +107,64 @@ describe('Dashboard DELETE & Mutation API Routes', () => {
     );
   });
 
+  it('does not retry a failed expense insert as a different transaction type', async () => {
+    const accountId = 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d';
+    const insertSingle = vi.fn().mockResolvedValue({
+      data: null,
+      error: { code: '23505', message: 'Unique constraint violation' },
+    });
+    const insert = vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({ single: insertSingle }),
+    });
+
+    mockAdmin.from.mockImplementation((table: string) => {
+      if (table === 'accounts') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({
+              data: [{
+                id: accountId,
+                name: 'Bank / UPI',
+                type: 'bank',
+                purpose: 'spending',
+                is_default: true,
+              }],
+              error: null,
+            }),
+          }),
+        };
+      }
+      if (table === 'categories') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        };
+      }
+      return { insert };
+    });
+
+    const response = await POST(
+      new NextRequest('http://localhost:3000/api/dashboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'add_transaction',
+          type: 'expense',
+          amount_paise: 10000,
+          account_id: accountId,
+          category_name: 'Food & Dining',
+        }),
+      })
+    );
+
+    expect(response.status).toBe(500);
+    expect(insert).toHaveBeenCalledTimes(1);
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'expense', amount_paise: 10000 })
+    );
+  });
+
   it('scopes transaction deletion to the authenticated user', async () => {
     const transactionId = '5d7e239a-6b21-44c6-a04a-c67c47f31d85';
     const deleteForUser = vi.fn().mockResolvedValue({ error: null });
@@ -171,45 +229,72 @@ describe('Dashboard DELETE & Mutation API Routes', () => {
     expect(mockAdmin.from).not.toHaveBeenCalled();
   });
 
-  it('handles account reconciliation by creating an adjustment transaction', async () => {
+  it('reconciles only the selected account without creating a transaction', async () => {
     const accountId = 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d';
+    const cashAccountId = 'b1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d';
+    const updateSingle = vi.fn().mockResolvedValue({
+      data: { id: accountId, opening_balance_paise: 320000 },
+      error: null,
+    });
+    const selectUpdatedAccount = vi.fn().mockReturnValue({ single: updateSingle });
+    const matchUpdatedUser = vi.fn().mockReturnValue({ select: selectUpdatedAccount });
+    const matchUpdatedAccount = vi.fn().mockReturnValue({ eq: matchUpdatedUser });
+    const updateAccount = vi.fn().mockReturnValue({ eq: matchUpdatedAccount });
+    const insertTransaction = vi.fn();
+    const transactions = [
+      { type: 'expense', amount_paise: 50000, account_id: accountId },
+      {
+        type: 'transfer',
+        amount_paise: 20000,
+        account_id: accountId,
+        transfer_to_account_id: cashAccountId,
+      },
+    ];
+
     mockAdmin.from.mockImplementation((table: string) => {
       if (table === 'accounts') {
         return {
           select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                single: vi.fn().mockResolvedValue({
-                  data: { id: accountId, name: 'Cash', opening_balance_paise: 200000 },
-                  error: null,
-                }),
-              }),
+            eq: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: accountId,
+                  name: 'Bank / UPI',
+                  type: 'bank',
+                  purpose: 'spending',
+                  is_default: true,
+                  opening_balance_paise: 200000,
+                },
+                {
+                  id: cashAccountId,
+                  name: 'Cash',
+                  type: 'cash',
+                  purpose: 'spending',
+                  is_default: false,
+                  opening_balance_paise: 0,
+                },
+              ],
+              error: null,
             }),
           }),
+          update: updateAccount,
         };
       }
       if (table === 'transactions') {
         return {
           select: vi.fn().mockReturnValue({
             eq: vi.fn().mockResolvedValue({
-              data: [{ type: 'expense', amount_paise: 50000, account_id: accountId }],
+              data: transactions,
               error: null,
             }),
           }),
-          insert: vi.fn().mockReturnValue({
-            select: vi.fn().mockReturnValue({
-              single: vi.fn().mockResolvedValue({
-                data: { id: 'adj-tx-id' },
-                error: null,
-              }),
-            }),
-          }),
+          insert: insertTransaction,
         };
       }
       return {};
     });
 
-    // Opening 2,000 - expense 500 = 1,500. Actual = 2,500 (+1,000 difference)
+    // UPI is 2,000 - 500 expense - 200 transfer = 1,300; set it to 2,500.
     const response = await POST(
       new NextRequest('http://localhost:3000/api/dashboard', {
         method: 'POST',
@@ -225,7 +310,10 @@ describe('Dashboard DELETE & Mutation API Routes', () => {
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(data.adjustedPaise).toBe(100000);
+    expect(data.adjustedPaise).toBe(120000);
     expect(data.newBalancePaise).toBe(250000);
+    expect(data.openingBalancePaise).toBe(320000);
+    expect(updateAccount).toHaveBeenCalledWith({ opening_balance_paise: 320000 });
+    expect(insertTransaction).not.toHaveBeenCalled();
   });
 });
