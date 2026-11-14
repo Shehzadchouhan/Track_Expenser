@@ -55,3 +55,9 @@ For incoming bot messages, configure Meta's webhook callback to the public deplo
 Signed-in users can scan a JPG, PNG, or WebP receipt, payment screenshot, or screenshot of a bank SMS from the add-transaction dialog. Images must be no larger than 6 MB; the app sends them to its image parser to extract suggested details, shows a local preview, and does not persist the uploaded image. Review and correct the extracted fields before explicitly saving the transaction. Image parsing requires the configured Gemini API credentials.
 
 The WhatsApp bot can parse bank debit/credit alert text when you forward or copy-paste the alert into the verified WhatsApp business chat. It cannot read the phone's native SMS inbox or automatically receive SMS; WhatsApp does not grant this website access to native SMS messages.
+
+## Paying and recording an expense with UPI
+
+The expense form can prepare a UPI payment from a scanned payment QR code. Scan a QR shown on another screen with the camera, or upload an image containing the QR; valid UPI payment QR codes open the installed UPI app with the payee and amount prefilled. The app can also copy a recipient's Indian mobile number, but phone-number lookup must be completed manually inside the user's UPI app because that behavior is not universal.
+
+After returning from the UPI app, users must confirm that the payment succeeded before Track Expenser records the expense. This confirmation is user-reported, not bank-verified; the app never requests or handles a UPI PIN. An in-progress payment draft is kept locally on the device and restored when the add-transaction form is reopened. Camera scanning requires browser camera permission and a secure context; QR image upload and copying the QR's UPI ID are alternatives.

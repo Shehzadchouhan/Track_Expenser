@@ -1044,8 +1044,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const fullNote = mutation.note?.trim()
-      ? `${mutation.note.trim()} ${metaTag}`
+    const noteContent = mutation.note?.trim().slice(0, Math.max(0, 280 - metaTag.length - 1));
+    const fullNote = noteContent
+      ? `${noteContent} ${metaTag}`
       : metaTag;
 
     let categoryId: string | null = null;

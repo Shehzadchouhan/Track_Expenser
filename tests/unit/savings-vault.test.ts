@@ -4,7 +4,12 @@ import type { User } from '@supabase/supabase-js';
 import { POST } from '@/app/api/dashboard/route';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getAuthenticatedUser } from '@/lib/supabase/auth';
-import { isValidUpiId, buildUpiPayUrl } from '@/lib/upi';
+import {
+  buildUpiPayUrl,
+  isValidUpiId,
+  normalizeIndianMobileNumber,
+  parseUpiQrCode,
+} from '@/lib/upi';
 import {
   UpdateSavingsUpiSchema,
   UpdateAccountGoalSchema,
@@ -33,6 +38,13 @@ describe('Phase 3: Savings Vault & UPI Integration', () => {
       expect(isValidUpiId('user@@bank')).toBe(false);
     });
 
+    it('normalizes valid Indian mobile numbers for the UPI app handoff', () => {
+      expect(normalizeIndianMobileNumber('9876543210')).toBe('+919876543210');
+      expect(normalizeIndianMobileNumber('+91 98765-43210')).toBe('+919876543210');
+      expect(normalizeIndianMobileNumber('1234567890')).toBeNull();
+      expect(normalizeIndianMobileNumber('+1 9876543210')).toBeNull();
+    });
+
     it('builds NPCI-compliant upi://pay intent URLs', () => {
       const url = buildUpiPayUrl({
         upiId: 'user@okhdfcbank',
@@ -55,6 +67,29 @@ describe('Phase 3: Savings Vault & UPI Integration', () => {
       expect(url).toContain('am=1250.50');
       expect(url).toContain('cu=INR');
       expect(url).toContain('pa=9876543210%40paytm');
+    });
+
+    it('parses a UPI QR payment address and optional fixed amount', () => {
+      expect(
+        parseUpiQrCode('upi://pay?pa=shop%40okhdfcbank&pn=Corner+Store&am=1250.50&cu=INR')
+      ).toEqual({
+        upiId: 'shop@okhdfcbank',
+        payeeName: 'Corner Store',
+        amountRupees: 1250.5,
+      });
+
+      expect(parseUpiQrCode('upi://pay?pa=shop%40okhdfcbank&cu=INR')).toEqual({
+        upiId: 'shop@okhdfcbank',
+        payeeName: undefined,
+        amountRupees: undefined,
+      });
+    });
+
+    it('rejects non-UPI QR data and malformed or unsupported payment details', () => {
+      expect(parseUpiQrCode('https://example.com')).toBeNull();
+      expect(parseUpiQrCode('upi://pay?pa=invalid&am=10')).toBeNull();
+      expect(parseUpiQrCode('upi://pay?pa=shop%40upi&cu=USD')).toBeNull();
+      expect(parseUpiQrCode('upi://pay?pa=shop%40upi&am=10.001')).toBeNull();
     });
   });
 

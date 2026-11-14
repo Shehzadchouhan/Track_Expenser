@@ -1160,9 +1160,16 @@ export default function Home() {
     merchant?: string;
     note?: string;
     occurredAt?: string;
+    paymentMethod?: 'upi';
   }) => {
     const cat = DEFAULT_CATEGORIES.find((c) => c.name === data.category);
     const amount_paise = Math.round(data.amountRupees * 100);
+    const transactionNote =
+      data.paymentMethod === 'upi'
+        ? ['Paid via UPI (user-confirmed)', data.note?.trim().slice(0, 120)]
+            .filter(Boolean)
+            .join(' · ')
+        : data.note || null;
 
     const findAccount = (accId?: string | null): DashboardAccount | undefined => {
       if (!accId) return undefined;
@@ -1192,7 +1199,12 @@ export default function Home() {
     const isSameAccount = data.type === 'transfer' && sourceAccId && destAccId && sourceAccId === destAccId;
 
     // Guard: Prevent negative money storage / insufficient balance
-    if (data.type === 'expense' && fromAcc && fromAcc.current_balance_paise < amount_paise) {
+    if (
+      data.paymentMethod !== 'upi' &&
+      data.type === 'expense' &&
+      fromAcc &&
+      fromAcc.current_balance_paise < amount_paise
+    ) {
       const avail = (Math.max(0, fromAcc.current_balance_paise) / 100).toFixed(2);
       const needed = data.amountRupees.toFixed(2);
       throw new Error(
@@ -1221,7 +1233,7 @@ export default function Home() {
       transfer_to_account_id: isSameAccount ? null : destAccId || null,
       transfer_to_account_name: isSameAccount ? null : toAcc?.name || null,
       merchant: data.merchant || (isSameAccount ? 'Self Deposit / Top-up' : null),
-      note: data.note || null,
+      note: transactionNote,
       category_name: isSameAccount ? 'Deposit' : data.type === 'transfer' ? 'Transfer' : data.category || 'General',
       category_color: isSameAccount ? '#10B981' : data.type === 'transfer' ? '#3B82F6' : cat?.color || '#64748B',
       source: 'web',
@@ -1300,7 +1312,7 @@ export default function Home() {
             transfer_to_account_name: toAcc?.name,
             category_name: isSameAccount ? 'Deposit' : data.category,
             merchant: data.merchant,
-            note: data.note,
+            note: transactionNote,
             occurred_at: newTx.occurred_at,
           }),
         });

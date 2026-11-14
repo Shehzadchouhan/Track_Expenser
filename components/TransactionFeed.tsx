@@ -309,6 +309,11 @@ export function TransactionFeed({
                           : tx.merchant || tx.note || (isExpense ? 'Expense' : 'Income')}
                       </span>
                       {!simpleMode && getSourceBadge(tx.source)}
+                      {tx.note?.includes('Paid via UPI (user-confirmed)') && (
+                        <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
+                          UPI · {isHindi ? 'आपकी पुष्टि' : 'self-confirmed'}
+                        </span>
+                      )}
                     </div>
 
                     <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">

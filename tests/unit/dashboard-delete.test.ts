@@ -95,6 +95,7 @@ describe('Dashboard DELETE & Mutation API Routes', () => {
           type: 'expense',
           amount_paise: 10000,
           category_name: 'Food & Dining',
+          note: `Paid via UPI (user-confirmed) · ${'x'.repeat(240)}`,
         }),
       })
     );
@@ -105,6 +106,9 @@ describe('Dashboard DELETE & Mutation API Routes', () => {
     expect(insert).toHaveBeenCalledWith(
       expect.objectContaining({ user_id: userId, amount_paise: 10000 })
     );
+    const insertedNote = insert.mock.calls[0]?.[0]?.note as string;
+    expect(insertedNote).toContain('Paid via UPI (user-confirmed)');
+    expect(insertedNote.length).toBeLessThanOrEqual(280);
   });
 
   it('does not retry a failed expense insert as a different transaction type', async () => {
